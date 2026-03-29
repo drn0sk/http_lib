@@ -42,12 +42,13 @@ ifdef SERVER
 endif
 
 BUILD_DIR = build
+SOURCES := $(OBJECTS:.o=.c)
+HEADERS := httplib.h $(OBJECTS:.o=.h)
 OBJECTS := $(addprefix $(BUILD_DIR)/,$(OBJECTS))
 
-shared : ALL_CFLAGS += -fPIC
 shared : $(BUILD_DIR)/libhttp.so
-$(BUILD_DIR)/libhttp.so : $(OBJECTS)
-	$(CC) -shared $(ALL_CFLAGS) $(LDFLAGS) $(OBJECTS) -o $(BUILD_DIR)/libhttp.so $(LDLIBS)
+$(BUILD_DIR)/libhttp.so : $(HEADERS) $(SOURCES) | $(BUILD_DIR)
+	$(CC) -shared -fPIC $(if $(PORT),-D'PORT=$(PORT)') $(CPPFLAGS) $(ALL_CFLAGS) $(LDFLAGS) $(SOURCES) -o $(BUILD_DIR)/libhttp.so $(LDLIBS)
 
 AR = gcc-ar
 ARFLAGS = rvcs
@@ -88,7 +89,7 @@ install_shared : shared
 install_static : static
 	$(INSTALL_DATA) $(if $(STRIP),-s) $(BUILD_DIR)/libhttp.a $(DESTDIR)$(libdir)/
 install_headers : | $(DESTDIR)$(includedir)/libhttp/
-	$(INSTALL_DATA) httplib.h $(patsubst $(BUILD_DIR)/%.o,%.h,$(OBJECTS)) $(DESTDIR)$(includedir)/libhttp/
+	$(INSTALL_DATA) $(filter-out _httplib_utils.h,$(HEADERS)) $(DESTDIR)$(includedir)/libhttp/
 $(DESTDIR)$(includedir)/libhttp/ :
 	mkdir $(DESTDIR)$(includedir)/libhttp/
 uninstall :
