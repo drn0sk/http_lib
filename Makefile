@@ -1,84 +1,97 @@
 .DELETE_ON_ERROR:
 
-.PHONY : default release debug clean clean_all clean_libhttp.o clean_libhttp.a clean_libhttp.so
+.PHONY : all release debug shared static clean clean_all clean_objects clean_libhttp.a clean_libhttp.so install install-strip install_shared install_static install_headers uninstall
 
+CFLAGS = -g -O # defaults if CFLAGS is not explicitly set
 RELEASE_CFLAGS = -O3 -flto
 DEBUG_CFLAGS = -ggdb -Og
-CFLAGS = $(EXTRA_CFLAGS)
-
-_null  :=
-_space := $(_null) #
-_comma := ,
-
-LDFLAGS := $(if $(LDFLAGS),-Wl,$(subst $(_space),$(_comma),$(strip $(LDFLAGS))))
+ALL_CFLAGS =
 
 ifdef DEBUG
- CFLAGS += $(DEBUG_CFLAGS)
+ ALL_CFLAGS += $(DEBUG_CFLAGS)
 else ifdef RELEASE
- CFLAGS += $(RELEASE_CFLAGS)
+ ALL_CFLAGS += $(RELEASE_CFLAGS)
+endif
+ALL_CFLAGS += $(CFLAGS)
+
+STATIC =
+SHARED = 1
+ifdef STATIC
+ TARGET += static
+endif
+ifdef SHARED
+ TARGET += shared
 endif
 
-BUILD_DIR = build
+all : $(TARGET)
 
-ifndef STATIC
- # shared library built if STATIC is not set
- TARGET = $(BUILD_DIR)/libhttp.so
- CFLAGS += -fPIC
-else 
- TARGET = $(BUILD_DIR)/libhttp.a
-endif
+release : ALL_CFLAGS += $(RELEASE_CFLAGS)
+release : all
+debug : ALL_CFLAGS += $(DEBUG_CFLAGS)
+debug : all
 
-default : $(TARGET)
-
-release : CFLAGS += $(RELEASE_CFLAGS)
-release : default
-
-debug : CFLAGS += $(DEBUG_CFLAGS)
-debug : default
-
-HEADERS = httplib.h _httplib_utils.h
 OBJECTS = _httplib_utils.o
-#SOURCES = _httplib_utils.c
 
 SERVER = true
 CLIENT = true
-
 ifdef CLIENT
- #HEADERS += http_client.h
  OBJECTS += http_client.o
- #SOURCES += http_client.c
 endif
 ifdef SERVER
- #HEADERS += http_server.h
  OBJECTS += http_server.o
- #SOURCES += http_server.c
 endif
 
+BUILD_DIR = build
 OBJECTS := $(addprefix $(BUILD_DIR)/,$(OBJECTS))
 
+shared : ALL_CFLAGS += -fPIC
+shared : $(BUILD_DIR)/libhttp.so
 $(BUILD_DIR)/libhttp.so : $(OBJECTS)
-	$(CC) -shared $(CFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/libhttp.so $(OBJECTS)
+	$(CC) -shared $(ALL_CFLAGS) $(LDFLAGS) $(OBJECTS) -o $(BUILD_DIR)/libhttp.so $(LDLIBS)
 
 AR = gcc-ar
-
+ARFLAGS = rvcs
+static : $(BUILD_DIR)/libhttp.a
 $(BUILD_DIR)/libhttp.a : $(OBJECTS)
-	$(AR) -rcs $(BUILD_DIR)/libhttp.a $(OBJECTS)
+	$(AR) $(ARFLAGS) $(BUILD_DIR)/libhttp.a $(OBJECTS)
 
-$(OBJECTS) : $(HEADERS) | $(BUILD_DIR)
+$(OBJECTS) : httplib.h _httplib_utils.h | $(BUILD_DIR)
 $(OBJECTS) : $(BUILD_DIR)/%.o : %.h
 $(OBJECTS) : $(BUILD_DIR)/%.o : %.c
-	$(CC)	-c $(CFLAGS) \
-		$(if $(PORT),-D'PORT=$(PORT)') \
-		-o $@ $<
+	$(CC) -c $(if $(PORT),-D'PORT=$(PORT)') $(CPPFLAGS) $(ALL_CFLAGS) $< -o $@
 $(BUILD_DIR) :
-	mkdir -p $(BUILD_DIR)
+	-mkdir $(BUILD_DIR)
 
 clean : clean_all
 clean_all:
 	-rm -r $(BUILD_DIR)
-clean_libhttp.o :
-	-rm $(BUILD_DIR)/libhttp.o
+clean_objects :
+	-rm $(BUILD_DIR)/*.o
 clean_libhttp.a :
 	-rm $(BUILD_DIR)/libhttp.a
 clean_libhttp.so :
 	-rm $(BUILD_DIR)/libhttp.so
+
+INSTALL = install
+INSTALL_PROGRAM = $(INSTALL)
+INSTALL_DATA = $(INSTALL) -m 644
+prefix = /usr/local
+exec_prefix = $(prefix)
+includedir = $(prefix)/include
+libdir = $(exec_prefix)/lib
+
+install : $(addprefix install_,$(TARGET)) install_headers
+install-strip : STRIP = 1
+install-strip : install
+install_shared : shared
+	$(INSTALL_PROGRAM) $(if $(STRIP),-s) $(BUILD_DIR)/libhttp.so $(DESTDIR)$(libdir)/
+install_static : static
+	$(INSTALL_DATA) $(if $(STRIP),-s) $(BUILD_DIR)/libhttp.a $(DESTDIR)$(libdir)/
+install_headers : | $(DESTDIR)$(includedir)/libhttp/
+	$(INSTALL_DATA) httplib.h $(patsubst $(BUILD_DIR)/%.o,%.h,$(OBJECTS)) $(DESTDIR)$(includedir)/libhttp/
+$(DESTDIR)$(includedir)/libhttp/ :
+	mkdir $(DESTDIR)$(includedir)/libhttp/
+uninstall :
+	-rm $(DESTDIR)$(libdir)/libhttp.so
+	-rm $(DESTDIR)$(libdir)/libhttp.a
+	-rm -r $(DESTDIR)$(includedir)/libhttp
