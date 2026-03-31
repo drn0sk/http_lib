@@ -1,6 +1,6 @@
 .DELETE_ON_ERROR:
 
-.PHONY : all release debug shared static clean clean_all clean_objects clean_libhttp.a clean_libhttp.so install install-strip install_shared install_static install_headers uninstall
+.PHONY : all release debug shared static clean clean_all clean_objects clean_static clean_shared install install-strip install_shared install_static install_headers uninstall
 
 CFLAGS = -g -O # defaults if CFLAGS is not explicitly set
 RELEASE_CFLAGS = -O3 -flto
@@ -46,15 +46,21 @@ SOURCES := $(OBJECTS:.o=.c)
 HEADERS := httplib.h $(OBJECTS:.o=.h)
 OBJECTS := $(addprefix $(BUILD_DIR)/,$(OBJECTS))
 
-shared : $(BUILD_DIR)/libhttp.so
-$(BUILD_DIR)/libhttp.so : $(HEADERS) $(SOURCES) | $(BUILD_DIR)
-	$(CC) -shared -fPIC $(if $(PORT),-D'PORT=$(PORT)') $(CPPFLAGS) $(ALL_CFLAGS) $(LDFLAGS) $(SOURCES) -o $(BUILD_DIR)/libhttp.so $(LDLIBS)
+VERSION_MAJOR := 1
+VERSION_MINOR := 0
+SONAME := libhttp.so.$(VERSION_MAJOR)
+REALNAME := $(SONAME).$(VERSION_MINOR)
+STATICNAME := libhttp-$(VERSION_MAJOR).$(VERSION_MINOR).a
+
+shared : $(BUILD_DIR)/$(REALNAME)
+$(BUILD_DIR)/$(REALNAME) : $(HEADERS) $(SOURCES) | $(BUILD_DIR)
+	$(CC) -shared -fPIC -Wl,-soname,$(SONAME) $(if $(PORT),-D'PORT=$(PORT)') $(CPPFLAGS) $(ALL_CFLAGS) $(LDFLAGS) $(SOURCES) -o $(BUILD_DIR)/$(REALNAME) $(LDLIBS)
 
 AR = gcc-ar
 ARFLAGS = rvcs
-static : $(BUILD_DIR)/libhttp.a
-$(BUILD_DIR)/libhttp.a : $(OBJECTS)
-	$(AR) $(ARFLAGS) $(BUILD_DIR)/libhttp.a $(OBJECTS)
+static : $(BUILD_DIR)/$(STATICNAME)
+$(BUILD_DIR)/$(STATICNAME) : $(OBJECTS)
+	$(AR) $(ARFLAGS) $(BUILD_DIR)/$(STATICNAME) $(OBJECTS)
 
 $(OBJECTS) : httplib.h _httplib_utils.h | $(BUILD_DIR)
 $(OBJECTS) : $(BUILD_DIR)/%.o : %.h
@@ -68,10 +74,10 @@ clean_all:
 	-rm -r $(BUILD_DIR)
 clean_objects :
 	-rm $(BUILD_DIR)/*.o
-clean_libhttp.a :
-	-rm $(BUILD_DIR)/libhttp.a
-clean_libhttp.so :
-	-rm $(BUILD_DIR)/libhttp.so
+clean_static :
+	-rm $(BUILD_DIR)/$(STATICNAME)
+clean_shared :
+	-rm $(BUILD_DIR)/$(REALNAME)
 
 INSTALL = install
 INSTALL_PROGRAM = $(INSTALL)
@@ -85,14 +91,15 @@ install : $(addprefix install_,$(TARGET)) install_headers
 install-strip : STRIP = 1
 install-strip : install
 install_shared : shared
-	$(INSTALL_PROGRAM) $(if $(STRIP),-s) $(BUILD_DIR)/libhttp.so $(DESTDIR)$(libdir)/
+	$(INSTALL_PROGRAM) $(if $(STRIP),-s) $(BUILD_DIR)/$(REALNAME) $(DESTDIR)$(libdir)/
+	ldconfig -n $(DESTDIR)$(libdir)/
 install_static : static
-	$(INSTALL_DATA) $(if $(STRIP),-s) $(BUILD_DIR)/libhttp.a $(DESTDIR)$(libdir)/
+	$(INSTALL_DATA) $(if $(STRIP),-s) $(BUILD_DIR)/$(STATICNAME) $(DESTDIR)$(libdir)/
 install_headers : | $(DESTDIR)$(includedir)/libhttp/
 	$(INSTALL_DATA) $(filter-out _httplib_utils.h,$(HEADERS)) $(DESTDIR)$(includedir)/libhttp/
 $(DESTDIR)$(includedir)/libhttp/ :
 	mkdir $(DESTDIR)$(includedir)/libhttp/
 uninstall :
-	-rm $(DESTDIR)$(libdir)/libhttp.so
-	-rm $(DESTDIR)$(libdir)/libhttp.a
+	-rm $(DESTDIR)$(libdir)/$(REALNAME)
+	-rm $(DESTDIR)$(libdir)/$(STATICNAME)
 	-rm -r $(DESTDIR)$(includedir)/libhttp
