@@ -87,13 +87,14 @@ exec_prefix = $(prefix)
 includedir = $(prefix)/include
 libdir = $(exec_prefix)/lib
 
+LDCONFIG = ldconfig
 install : $(addprefix install_,$(TARGET)) install_headers
 install-strip : STRIP = 1
 install-strip : install
 install_shared : shared
 	$(INSTALL_PROGRAM) $(if $(STRIP),-s) $(BUILD_DIR)/$(REALNAME) $(DESTDIR)$(libdir)/
-	$(LDCONFIG) -n $(DESTDIR)$(libdir)/
-	ln -rs $(DESTDIR)$(libdir)/libhttp.so $(SONAME)
+	$(LDCONFIG) -r $(DESTDIR) -n $(libdir)/
+	ln -s $(SONAME) $(DESTDIR)$(libdir)/libhttp.so
 install_static : static
 	$(INSTALL_DATA) $(if $(STRIP),-s) $(BUILD_DIR)/$(STATICNAME) $(DESTDIR)$(libdir)/
 install_headers : | $(DESTDIR)$(includedir)/libhttp/
