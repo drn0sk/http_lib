@@ -92,7 +92,8 @@ install-strip : STRIP = 1
 install-strip : install
 install_shared : shared
 	$(INSTALL_PROGRAM) $(if $(STRIP),-s) $(BUILD_DIR)/$(REALNAME) $(DESTDIR)$(libdir)/
-	ldconfig -n $(DESTDIR)$(libdir)/
+	$(LDCONFIG) -n $(DESTDIR)$(libdir)/
+	ln -rs $(DESTDIR)$(libdir)/libhttp.so $(SONAME)
 install_static : static
 	$(INSTALL_DATA) $(if $(STRIP),-s) $(BUILD_DIR)/$(STATICNAME) $(DESTDIR)$(libdir)/
 install_headers : | $(DESTDIR)$(includedir)/libhttp/
@@ -101,5 +102,7 @@ $(DESTDIR)$(includedir)/libhttp/ :
 	mkdir $(DESTDIR)$(includedir)/libhttp/
 uninstall :
 	-rm $(DESTDIR)$(libdir)/$(REALNAME)
+	-rm $(DESTDIR)$(libdir)/$(SONAME)
+	-rm $(DESTDIR)$(libdir)/libhttp.so
 	-rm $(DESTDIR)$(libdir)/$(STATICNAME)
 	-rm -r $(DESTDIR)$(includedir)/libhttp
