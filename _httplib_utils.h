@@ -2,6 +2,7 @@
 #define HTTPLIB_UTILS
 
 #include "httplib.h"
+#include <sys/types.h>
 
 struct HTTPVersion {
 	long major, minor;

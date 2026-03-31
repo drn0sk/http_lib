@@ -1,6 +1,7 @@
 #ifndef HTTP_SERVER
 #define HTTP_SERVER
 
+// internal header that includes the public header "httplib.h"
 #include "_httplib_utils.h"
 
 typedef struct query *query_list;

@@ -2,26 +2,17 @@
 #include "http_server.h"
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <errno.h>
 #include <stdio.h>
-#include <string.h>
-#include <netinet/ip.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <stdio.h>
-#include <stdbool.h>
-#include <ctype.h>
-#include <stdint.h>
 #include <inttypes.h>
 #include <signal.h>
 #include <sys/sendfile.h>
-#include <sys/stat.h>
 #include <time.h>
 #include <fcntl.h>
-#include <limits.h>
 
 static void free_query(query_list q) {
 	query_list tmp;

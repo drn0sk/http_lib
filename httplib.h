@@ -3,7 +3,6 @@
 
 #include <stddef.h>
 #include <stdbool.h>
-#include <sys/types.h>
 
 bool url_decode(char *src, char **dst, size_t len);
 bool url_encode(char *src, char **dst, size_t len);

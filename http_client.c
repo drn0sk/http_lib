@@ -1,19 +1,14 @@
 #include "http_client.h"
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <errno.h>
 #include <stdio.h>
 #include <netinet/ip.h>
-#include <arpa/inet.h>
 #include <unistd.h>
-#include <stdbool.h>
 #include <ctype.h>
 #include <stdint.h>
-#include <inttypes.h>
-#include <getopt.h>
 
 typedef struct url_list_node *url_list;
 struct url_list_node {
