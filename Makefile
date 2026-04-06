@@ -99,13 +99,13 @@ install_static : static | $(DESTDIR)$(libdir)/
 	$(INSTALL_DATA) $(if $(STRIP),-s) $(BUILD_DIR)/$(STATICNAME) $(DESTDIR)$(libdir)/
 $(DESTDIR)$(libdir)/ :
 	$(INSTALL) -d $(DESTDIR)$(libdir)/
-install_headers : | $(DESTDIR)$(includedir)/libhttp/
-	$(INSTALL_DATA) $(filter-out _httplib_utils.h,$(HEADERS)) $(DESTDIR)$(includedir)/libhttp/
-$(DESTDIR)$(includedir)/libhttp/ :
-	$(INSTALL) -d $(DESTDIR)$(includedir)/libhttp/
+install_headers : | $(DESTDIR)$(includedir)/http_lib-$(VERSION_MAJOR).$(VERSION_MINOR)/
+	$(INSTALL_DATA) $(filter-out _httplib_utils.h,$(HEADERS)) $(DESTDIR)$(includedir)/http_lib-$(VERSION_MAJOR).$(VERSION_MINOR)/
+$(DESTDIR)$(includedir)/http_lib-$(VERSION_MAJOR).$(VERSION_MINOR)/ :
+	$(INSTALL) -d $(DESTDIR)$(includedir)/http_lib-$(VERSION_MAJOR).$(VERSION_MINOR)/
 uninstall :
 	-rm $(DESTDIR)$(libdir)/$(REALNAME)
 	-rm $(DESTDIR)$(libdir)/$(SONAME)
 	-rm $(DESTDIR)$(libdir)/libhttp.so
 	-rm $(DESTDIR)$(libdir)/$(STATICNAME)
-	-rm -r $(DESTDIR)$(includedir)/libhttp
+	-rm -r $(DESTDIR)$(includedir)/http_lib-$(VERSION_MAJOR).$(VERSION_MINOR)
