@@ -1,4 +1,5 @@
 #include "http_client.h"
+#include "_httplib_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>

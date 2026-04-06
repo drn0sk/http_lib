@@ -4,10 +4,6 @@
 #include "httplib.h"
 #include <sys/types.h>
 
-struct HTTPVersion {
-	long major, minor;
-};
-
 void strtoupper(char *s);
 char *trim(char *s);
 // any function where grow(n) > n

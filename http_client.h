@@ -1,8 +1,7 @@
 #ifndef HTTP_CLIENT
 #define HTTP_CLIENT
 
-// internal header that includes the public header "httplib.h"
-#include "_httplib_utils.h"
+#include "httplib.h"
 
 struct status {
 	struct HTTPVersion version;

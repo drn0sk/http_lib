@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "http_server.h"
+#include "_httplib_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
