@@ -40,7 +40,9 @@ int (*post_req_handler)(char *target, query_list q, char *directory, char *reque
 extern bool child;
 
 // takes a char *directory to serve
+// if log is not NULL error messages and other information is output to it, otherwise nothing is output
+// if port is positive it is used as the port to listen on, otherwise the compiled in default is used
 // returns true on successful termination or false on error
-bool server(char *directory, struct HTTP_Request_Handlers hls, char *log);
+bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int port);
 
 #endif /* HTTP_SERVER */

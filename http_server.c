@@ -290,8 +290,9 @@ bool child = false;
 // set directory to NULL to serve current directory
 // since POST requests are optional, set hls.post_req_handler to NULL if they're not supported
 // hls.get_req_handler must be set to a valid pointer, since GET requests are required
-bool server(char *directory, struct HTTP_Request_Handlers hls, char *log) {
+bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int port) {
 	if(!hls.get_req_handler) return false;
+	if(port < 0) port = PORT;
 	int logfile = -1;
 	if(log) {
 		// open log file
@@ -341,7 +342,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log) {
 	}
 	struct sockaddr_in sad = {0};
 	sad.sin_family = AF_INET;
-	sad.sin_port = htons(PORT);
+	sad.sin_port = htons((uint16_t)port);
 	sad.sin_addr.s_addr = htonl(INADDR_ANY);
 	if(bind(sockfd, (struct sockaddr*)&sad, (socklen_t)sizeof(sad)) < 0) {
 		if(logfile >= 0) {
