@@ -32,8 +32,8 @@ debug : all
 
 OBJECTS = _httplib_utils.o
 
-SERVER = true
-CLIENT = true
+SERVER = 1
+CLIENT = 1
 ifdef CLIENT
  OBJECTS += http_client.o
 endif
@@ -46,8 +46,8 @@ SOURCES := $(OBJECTS:.o=.c)
 HEADERS := httplib.h $(OBJECTS:.o=.h)
 OBJECTS := $(addprefix $(BUILD_DIR)/,$(OBJECTS))
 
-VERSION_MAJOR := 1
-VERSION_MINOR := 4
+VERSION_MAJOR := 2
+VERSION_MINOR := 0
 SONAME := libhttp.so.$(VERSION_MAJOR)
 REALNAME := $(SONAME).$(VERSION_MINOR)
 STATICNAME := libhttp-$(VERSION_MAJOR).$(VERSION_MINOR).a
