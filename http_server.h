@@ -41,6 +41,6 @@ extern bool child;
 
 // takes a char *directory to serve
 // returns true on successful termination or false on error
-bool server(char *directory, struct HTTP_Request_Handlers hls);
+bool server(char *directory, struct HTTP_Request_Handlers hls, char *log);
 
 #endif /* HTTP_SERVER */

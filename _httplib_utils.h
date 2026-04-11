@@ -11,15 +11,15 @@ size_t grow(size_t old_len);
 // realloc but frees ptr on error
 void *reallocfree(void *ptr, size_t size);
 
-bool sendall(int sock, const void* msg, size_t len, int flags);
+bool sendall(int sock, const void* msg, size_t len, int flags, int logfile);
 // returns -1 on error or if recv was interrupted, 0 on success, and 1 if connection was closed
-int recvall(int sock, void *msg, size_t len, int flags);
+int recvall(int sock, void *msg, size_t len, int flags, int logfile);
 // returns -1 on error or if recv was interrupted, 0 if sock was closed, >0 on success
-ssize_t discard(int sockfd, size_t size);
+ssize_t discard(int sockfd, size_t size, int logfile);
 // returns -1 on error or if recv was interrupted, 0 on success, and 1 if connection was closed
-int recvline(int sock, char **msg, size_t *len);
+int recvline(int sock, char **msg, size_t *len, int logfile);
 // returns -2 if headers were invalid, -1 on other errors or if recv was interrupted, 0 if successful, 1 if connection was closed
-int read_headers(int sfd, headers *h);
+int read_headers(int sfd, headers *h, int logfile);
 
 typedef struct chunk *chunks;
 struct chunk {
@@ -31,6 +31,6 @@ struct chunk {
 void free_chunks(chunks c);
 bool add_chunk(chunks *c, size_t size, char *data);
 // returns -1 on error or if recv was interrupted, 0 on success, and 1 if connection was closed
-int read_chunked(int sockfd, char **content, size_t *content_len, bool discard);
+int read_chunked(int sockfd, char **content, size_t *content_len, bool discard, int logfile);
 
 #endif /* HTTPLIB_UTILS */

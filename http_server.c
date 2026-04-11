@@ -94,17 +94,17 @@ const char *get_cookie(cookies c, char *name) {
 
 static bool close_conn = false;
 
-static bool sendfileall(int out, int in, size_t count) {
+static bool sendfileall(int out, int in, size_t count, int logfile) {
 	size_t sent = 0;
 	ssize_t retval;
 	while(sent < count) {
-		if(sent > 0) fprintf(stderr, "LOG: sent only %zu of %zu bytes, sending the rest\n", sent, count);
+		if(sent > 0 && logfile >= 0) dprintf(logfile, "LOG: sent only %zu of %zu bytes so far, sending the rest\n", sent, count);
 		retval = sendfile(out, in, NULL, count - sent);
 		if(retval < 0) {
 			switch(errno) {
 			case EAGAIN:
 			case ENOMEM:
-				fprintf(stderr, "LOG: Trying again\n");
+				if(logfile >= 0) dprintf(logfile, "LOG: Trying again\n");
 				continue;
 			}
 			return false;
@@ -114,14 +114,14 @@ static bool sendfileall(int out, int in, size_t count) {
 	return true;
 }
 
-static bool sendheaders(int sock, headers h, int flags) {
+static bool sendheaders(int sock, headers h, int flags, int logfile) {
 	for(;h;h=h->rest) {
-		if(!sendall(sock, h->header, strlen(h->header), flags | MSG_MORE)) return false;
-		if(!sendall(sock, ": ", 2, flags | MSG_MORE)) return false;
-		if(!sendall(sock, h->value, strlen(h->value), flags | MSG_MORE)) return false;
-		if(!sendall(sock, "\r\n", 2, flags | MSG_MORE)) return false;
+		if(!sendall(sock, h->header, strlen(h->header), flags | MSG_MORE, logfile)) return false;
+		if(!sendall(sock, ": ", 2, flags | MSG_MORE, logfile)) return false;
+		if(!sendall(sock, h->value, strlen(h->value), flags | MSG_MORE, logfile)) return false;
+		if(!sendall(sock, "\r\n", 2, flags | MSG_MORE, logfile)) return false;
 	}
-	if(!sendall(sock, "\r\n", 2, flags)) return false;
+	if(!sendall(sock, "\r\n", 2, flags, logfile)) return false;
 	return true;
 }
 
@@ -158,7 +158,7 @@ static void free_request(request *re) {
 	re->target = NULL;
 }
 
-static bool parse_request(char *request_line, request *re) {
+static bool parse_request(char *request_line, request *re, int logfile) {
 	char *sv = NULL;
 	char *meth, *target, *ver, *v1, *v2;
 	meth = strtok_r(request_line, " ", &sv);
@@ -171,7 +171,7 @@ static bool parse_request(char *request_line, request *re) {
 	char *name = strtok_r(ver, "/", &sv);
 	name = (name) ? name : '\0';
 	if(strcmp(name, "HTTP")) {
-		fprintf(stderr, "ERROR: Unkown http version name: %s\n", name);
+		if(logfile >= 0) dprintf(logfile, "ERROR: Unkown http version name: %s\n", name);
 		return false;
 	}
 	ver = strtok_r(NULL, "", &sv);
@@ -290,32 +290,53 @@ bool child = false;
 // set directory to NULL to serve current directory
 // since POST requests are optional, set hls.post_req_handler to NULL if they're not supported
 // hls.get_req_handler must be set to a valid pointer, since GET requests are required
-bool server(char *directory, struct HTTP_Request_Handlers hls) {
+bool server(char *directory, struct HTTP_Request_Handlers hls, char *log) {
 	if(!hls.get_req_handler) return false;
+	int logfile = -1;
+	if(log) {
+		// open log file
+		logfile = open(log, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+		if(logfile < 0) return false;
+	}
 	struct sigaction siga = {0};
 	siga.sa_handler = &exit_loop;
 	if(sigaction(SIGINT, &siga, NULL) < 0) {
-		perror("ERROR: sigaction SIGINT");
+		if(logfile >= 0) {
+			dprintf(logfile, "ERROR: sigaction SIGINT: %s", strerror(errno));
+			close(logfile);
+		}
 		return false;
 	}
 	if(sigaction(SIGTERM, &siga, NULL) < 0) {
-		perror("ERROR: sigaction SIGTERM");
+		if(logfile >= 0) {
+			dprintf(logfile, "ERROR: sigaction SIGTERM: %s", strerror(errno));
+			close(logfile);
+		}
 		return false;
 	}
 	if(sigaction(SIGPIPE, &siga, NULL) < 0) {
-		perror("ERROR: sigaction SIGPIPE");
+		if(logfile >= 0) {
+			dprintf(logfile, "ERROR: sigaction SIGPIPE: %s", strerror(errno));
+			close(logfile);
+		}
 		return false;
 	}
 	memset(&siga, 0, sizeof(struct sigaction));
 	siga.sa_sigaction = chld;
 	siga.sa_flags = SA_NOCLDWAIT | SA_SIGINFO;
 	if(sigaction(SIGCHLD, &siga, NULL) < 0) {
-		perror("Error: sigaction SIGCHLD");
+		if(logfile >= 0) {
+			dprintf(logfile, "Error: sigaction SIGCHLD: %s", strerror(errno));
+			close(logfile);
+		}
 		return false;
 	}
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if(sockfd < 0) {
-		perror("ERROR: socket");
+		if(logfile >= 0) {
+			dprintf(logfile, "ERROR: socket: %s", strerror(errno));
+			close(logfile);
+		}
 		return false;
 	}
 	struct sockaddr_in sad = {0};
@@ -323,12 +344,18 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 	sad.sin_port = htons(PORT);
 	sad.sin_addr.s_addr = htonl(INADDR_ANY);
 	if(bind(sockfd, (struct sockaddr*)&sad, (socklen_t)sizeof(sad)) < 0) {
-		perror("ERROR: bind");
+		if(logfile >= 0) {
+			dprintf(logfile, "ERROR: bind: %s", strerror(errno));
+			close(logfile);
+		}
 		close(sockfd);
 		return false;
 	}
 	if(listen(sockfd, 0) < 0) {
-		perror("ERROR: listen");
+		if(logfile >= 0) {
+			dprintf(logfile, "ERROR: listen: %s", strerror(errno));
+			close(logfile);
+		}
 		close(sockfd);
 		return false;
 	}
@@ -340,15 +367,15 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 		int connfd = accept(sockfd, (struct sockaddr*)&cad, &cad_len);
 		if(done) break;
 		if(connfd < 0) {
-			if(errno != EINTR) perror("ERROR: accept");
+			if(errno != EINTR && logfile >= 0) dprintf(logfile, "ERROR: accept: %s", strerror(errno));
 			continue;
 		}
-		fprintf(stderr, "LOG: Accepted a connection\n");
+		if(logfile >= 0) dprintf(logfile, "LOG: Accepted a connection\n");
 		p = fork();
 		if(p < 0) {
-			perror("ERROR: fork");
+			if(logfile >= 0) dprintf(logfile, "ERROR: fork: %s", strerror(errno));
 			char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-			sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+			sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 			close(connfd);
 			connfd = -1;
 			break;
@@ -359,29 +386,41 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 			struct sigaction siga = {0};
 			siga.sa_handler = &cleanup;
 			if(sigaction(SIGINT, &siga, NULL) < 0) {
-				fprintf(stderr, "ERROR: failed to add signal handler\n");
+				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
+				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
+				sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 				close(connfd);
 				connfd = -1;
+				if(logfile >= 0) close(logfile);
 				return false;
 			}
 			if(sigaction(SIGTERM, &siga, NULL) < 0) {
-				fprintf(stderr, "ERROR: failed to add signal handler\n");
+				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
+				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
+				sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 				close(connfd);
 				connfd = -1;
+				if(logfile >= 0) close(logfile);
 				return false;
 			}
 			if(sigaction(SIGPIPE, &siga, NULL) < 0) {
-				fprintf(stderr, "ERROR: failed to add signal handler\n");
+				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
+				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
+				sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 				close(connfd);
 				connfd = -1;
+				if(logfile >= 0) close(logfile);
 				return false;
 			}
 			siga.sa_handler = SIG_IGN;
 			siga.sa_flags = SA_NOCLDWAIT;
 			if(sigaction(SIGCHLD, &siga, NULL) < 0) {
-				fprintf(stderr, "ERROR: failed to add signal handler\n");
+				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
+				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
+				sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 				close(connfd);
 				connfd = -1;
+				if(logfile >= 0) close(logfile);
 				return false;
 			}
 			bool retval = true;
@@ -389,22 +428,22 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 				char *respLine = NULL;
 				size_t rspLen = 0;
 				int recvd;
-				if((recvd = recvline(connfd, &respLine, &rspLen))) {
+				if((recvd = recvline(connfd, &respLine, &rspLen, logfile))) {
 					free(respLine);
 					if(recvd < 0) {
-						fprintf(stderr, "ERROR: Failed to recv line\n");
+						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to recv line\n");
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					}
 					break;
 				}
 				if(strlen(respLine) == 2) { // empty line (only contains "\r\n")
-					if((recvd = recvline(connfd, &respLine, &rspLen))) {
+					if((recvd = recvline(connfd, &respLine, &rspLen, logfile))) {
 						free(respLine);
 						if(recvd < 0) {
-							fprintf(stderr, "ERROR: Failed to recv line\n");
+							if(logfile >= 0) dprintf(logfile, "ERROR: Failed to recv line\n");
 							char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						}
 						break;
 					}
@@ -412,20 +451,20 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 				request req;
 				static const char day[7][4] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
 				static const char month[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
-				if(!parse_request(respLine, &req)) {
-					fprintf(stderr, "ERROR: Failed to parse request: %s\n", respLine);
+				if(!parse_request(respLine, &req, logfile)) {
+					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to parse request: %s\n", respLine);
 					free(respLine);
 					struct timespec cur_time;
 					if(clock_gettime(CLOCK_REALTIME, &cur_time) < 0) {
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						break;
 					}
 					struct tm tm_current;
 					if(!gmtime_r(&(cur_time.tv_sec), &tm_current)) {
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						break;
 					}
@@ -433,7 +472,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					int wr = snprintf(date, 30, "%s, %.2u %s %.4u %.2u:%.2u:%.2u GMT", day[tm_current.tm_wday], tm_current.tm_mday, month[tm_current.tm_mon], tm_current.tm_year + 1900, tm_current.tm_hour, tm_current.tm_min, tm_current.tm_sec);
 					if(wr < 0 || wr >= 30) {
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						break;
 					}
@@ -441,27 +480,27 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					char *err_resp;
 					if(asprintf(&err_resp, "HTTP/1.1 400 Bad Request\r\nDate: %s\r\n\r\n", date) < 0) {
 						err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						break;
 					}
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					free(err_resp);
 					break;
 				}
 				free(respLine);
 				if(req.ver.major != 1 || req.ver.minor != 1) {
-					fprintf(stderr, "ERROR: Version %ld.%ld not supported\n", req.ver.major, req.ver.minor);
+					if(logfile >= 0) dprintf(logfile, "ERROR: Version %ld.%ld not supported\n", req.ver.major, req.ver.minor);
 					free_request(&req);
 					char *err_resp = "HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					break;
 				}
 				headers h = NULL;
-				int rhret = read_headers(connfd, &h);
+				int rhret = read_headers(connfd, &h, logfile);
 				if(rhret) {
-					fprintf(stderr, "ERROR: Failed to read headers\n");
+					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to read headers\n");
 					free_request(&req);
 					char *err_resp;
 					if(rhret < -1) {
@@ -470,7 +509,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 						retval = false;
 					}
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					break;
 				}
 				const char *close_str = get_header(h, "Connection");
@@ -483,12 +522,12 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 				struct timespec ctime;
 				char *etag = NULL;
 				headers hdrs = h;
-				fprintf(stderr, "LOG: %s %s\n", strmeth(req.method), req.target);
+				if(logfile >= 0) dprintf(logfile, "LOG: %s %s\n", strmeth(req.method), req.target);
 				char *sv_q = NULL, *sv_frag = NULL;
 				char *target = strdup(req.target);
 				if(!target) {
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
@@ -499,7 +538,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 				char *tmp_target = NULL;
 				if(!url_decode(target, &tmp_target, 0)) {
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
@@ -515,7 +554,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					par = strtok_r(query_str, "=", &sv);
 					if(!par) {
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -527,7 +566,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					par = strdup(par);
 					if(!par) {
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -541,7 +580,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					val = strdup(val);
 					if(!val) {
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -553,7 +592,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					}
 					if(!add_query(&q, par, val)) {
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -572,7 +611,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					char *cookie_hdr = strdup(c_tmp);
 					if(!cookie_hdr) {
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -589,7 +628,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						nam = strtok_r(cookie_str, "=", &sv2);
 						if(!nam) {
 							char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 							retval = false;
 							free_request(&req);
 							free_headers(h);
@@ -602,7 +641,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						nam = strdup(nam);
 						if(!nam) {
 							char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 							retval = false;
 							free_request(&req);
 							free_headers(h);
@@ -617,7 +656,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						val = strdup(val);
 						if(!val) {
 							char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 							retval = false;
 							free_request(&req);
 							free_headers(h);
@@ -630,7 +669,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						}
 						if(!update_cookie(&c, nam, val)) {
 							char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 							retval = false;
 							free_request(&req);
 							free_headers(h);
@@ -653,9 +692,9 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						if(!(value = get_header(h, "Expect")) || strcmp(value, "100-continue")) {
 							if((value = get_header(h, "Transfer-Encoding")) && *value) {
 								if(strcmp(value, "chunked")) {
-									fprintf(stderr, "ERROR: transfer coding(s) not supported (only chunked is supported): %s\n", value);
+									if(logfile >= 0) dprintf(logfile, "ERROR: transfer coding(s) not supported (only chunked is supported): %s\n", value);
 									char *err_resp = "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\n\r\n";
-									sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+									sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 									retval = false;
 									close_conn = true;
 									free_request(&req);
@@ -666,10 +705,10 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 									continue;
 								}
 								// chunked
-								if((recvd = read_chunked(sockfd, NULL, NULL, true))) {
+								if((recvd = read_chunked(sockfd, NULL, NULL, true, logfile))) {
 									if(recvd < 0) {
 										char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-										sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+										sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 										retval = false;
 									}
 									close_conn = true;
@@ -683,10 +722,10 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 							} else if((value = get_header(h, "Content-Length"))) {
 								uintmax_t size = strtoumax(value, NULL, 10);
 								ssize_t srcvd;
-								if((srcvd = discard(connfd, size)) < (intmax_t)size) {
+								if((srcvd = discard(connfd, size, logfile)) < (intmax_t)size) {
 									if(recvd < 0) {
 										char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-										sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+										sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 										retval = false;
 									}
 									close_conn = true;
@@ -710,7 +749,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						if((value = get_header(h, "Expect")) && !strcmp(value, "100-continue")) {
 							// send 100-continue
 							char *resp = "HTTP/1.1 100 Continue\r\n\r\n";
-							if(!sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL)) {
+							if(!sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL, logfile)) {
 								retval = false;
 								close_conn = true;
 								free_request(&req);
@@ -723,9 +762,9 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						}
 						if((value = get_header(h, "Transfer-Encoding")) && *value) {
 							if(strcmp(value, "chunked")) {
-								fprintf(stderr, "ERROR: transfer coding(s) not supported (only chunked is supported): %s\n", value);
+								if(logfile >= 0) dprintf(logfile, "ERROR: transfer coding(s) not supported (only chunked is supported): %s\n", value);
 								char *err_resp = "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\n\r\n";
-								sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+								sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 								retval = false;
 								close_conn = true;
 								free_request(&req);
@@ -736,10 +775,10 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 								continue;
 							}
 							// chunked
-							if((recvd = read_chunked(connfd, &req_body, &req_size, false))) {
+							if((recvd = read_chunked(connfd, &req_body, &req_size, false, logfile))) {
 								if(recvd < 0) {
 									char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-									sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+									sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 									retval = false;
 								}
 								close_conn = true;
@@ -753,7 +792,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						} else if((value = get_header(h, "Content-Length"))) {
 							if(sscanf(value, "%zu", &req_size) < 1) {
 								char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-								sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+								sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 								close_conn = true;
 								retval = false;
 								free_request(&req);
@@ -766,7 +805,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 							req_body = malloc(req_size);
 							if(!req_body) {
 								char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-								sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+								sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 								close_conn = true;
 								retval = false;
 								free_request(&req);
@@ -777,11 +816,11 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 								continue;
 							}
 							int recvd;
-							if((recvd = recvall(connfd, req_body, req_size, MSG_NOSIGNAL))) {
+							if((recvd = recvall(connfd, req_body, req_size, MSG_NOSIGNAL, logfile))) {
 								free(req_body);
 								if(recvd < 0) {
 									char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-									sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+									sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 									retval = false;
 								}
 								close_conn = true;
@@ -799,9 +838,9 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						break;
 					}
 				default:
-					fprintf(stderr, "ERROR: Unsupported method\n");
+					if(logfile >= 0) dprintf(logfile, "ERROR: Unsupported method\n");
 					char *err_resp = "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					close_conn = true;
 					retval = false;
 					free_request(&req);
@@ -821,7 +860,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					if(content_fd >= 0) close(content_fd);
 					free_headers(hdrs);
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
@@ -834,7 +873,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					if(content_fd >= 0) close(content_fd);
 					free_headers(hdrs);
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
@@ -848,7 +887,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					if(content_fd >= 0) close(content_fd);
 					free_headers(hdrs);
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
@@ -858,7 +897,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 				const char *value = get_header(h, "Host");
 				char *hsvp = NULL, *v2 = NULL;
 				if(!value || !(v2 = strdup(value)) || !(v2 = strtok_r(v2, ":", &hsvp)) || !*v2) {
-					if(value) fprintf(stderr, "ERROR: Invalid hostname: %s\n", value);
+					if(value && logfile >= 0) dprintf(logfile, "ERROR: Invalid hostname: %s\n", value);
 					status = 400;
 					reason = "Bad Request";
 					free_headers(hdrs);
@@ -876,26 +915,26 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 				if(status < 200 || status == 204) content_len = 0;
 				close_conn |= (status >= 500);
 				if(close_conn && !update_header(&hdrs, strdup("Connection"), strdup("close"))) {
-					fprintf(stderr, "ERROR: Failed to add header\n");
+					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to add header\n");
 					free(type);
 					free(etag);
 					if(content_fd >= 0) close(content_fd);
 					free_headers(hdrs);
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
 					break;
 				}
 				if((status < 500) && !update_header(&hdrs, strdup("Date"), strdup(date))) {
-					fprintf(stderr, "ERROR: Failed to add header\n");
+					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to add header\n");
 					free(type);
 					free(etag);
 					if(content_fd >= 0) close(content_fd);
 					free_headers(hdrs);
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
@@ -903,13 +942,13 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 				}
 				if(content_len > 0) {
 					if(!update_header(&hdrs, strdup("Content-Type"), type)) {
-						fprintf(stderr, "ERROR: Failed to add header\n");
+						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to add header\n");
 						free(type);
 						free(etag);
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -922,18 +961,18 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					char *respLine;
 					free(etag);
 					if(asprintf(&respLine, "HTTP/1.1 %d %s\r\nContent-Length: %zu\r\n", status, reason, content_len) < 0) {
-						fprintf(stderr, "ERROR: Failed to create response status line\n");
+						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to create response status line\n");
 						free_headers(hdrs);
 						if(content_fd >= 0) close(content_fd);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
 						break;
 					}
-					if(!sendall(connfd, respLine, strlen(respLine), MSG_NOSIGNAL | ((hdrs) ? MSG_MORE : 0))) {
-						fprintf(stderr, "ERROR: Failed to send response status line\n");
+					if(!sendall(connfd, respLine, strlen(respLine), MSG_NOSIGNAL | ((hdrs) ? MSG_MORE : 0), logfile)) {
+						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send response status line\n");
 						free_headers(hdrs);
 						if(content_fd >= 0) close(content_fd);
 						free(respLine);
@@ -943,8 +982,8 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						break;
 					}
 					free(respLine);
-					if(!sendheaders(connfd, hdrs, MSG_NOSIGNAL | ((content_len > 0) ? MSG_MORE : 0))) {
-						fprintf(stderr, "ERROR: Failed to send response status line\n");
+					if(!sendheaders(connfd, hdrs, MSG_NOSIGNAL | ((content_len > 0) ? MSG_MORE : 0), logfile)) {
+						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send response status line\n");
 						free_headers(hdrs);
 						if(content_fd >= 0) close(content_fd);
 						retval = false;
@@ -954,8 +993,8 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					}
 					free_headers(hdrs);
 					retval = (status < 500);
-					if(content_len > 0 && !sendfileall(connfd, content_fd, content_len)) {
-						fprintf(stderr, "ERROR: Failed to send response body\n");
+					if(content_len > 0 && !sendfileall(connfd, content_fd, content_len, logfile)) {
+						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send response body\n");
 						retval = false;
 						close_conn = true;
 					}
@@ -970,7 +1009,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					if(content_fd >= 0) close(content_fd);
 					free_headers(hdrs);
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
@@ -983,7 +1022,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					if(content_fd >= 0) close(content_fd);
 					free_headers(hdrs);
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
@@ -992,11 +1031,11 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 				last_modified[29] = '\0';
 				if(!update_header(&hdrs, strdup("Last-Modified"), strdup(last_modified))) {
 					free(etag);
-					fprintf(stderr, "ERROR: Failed to add header\n");
+					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to add header\n");
 					if(content_fd >= 0) close(content_fd);
 					free_headers(hdrs);
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
@@ -1007,7 +1046,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					if(content_fd >= 0) close(content_fd);
 					free_headers(hdrs);
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
@@ -1020,13 +1059,13 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						char *resp;
 						if(asprintf(&resp, "HTTP/1.1 412 Precondition Failed\r\nDate: %s\r\n\r\n", date) < 0) {
 							char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 							retval = false;
 							free_request(&req);
 							free_headers(h);
 							break;
 						}
-						sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL);
+						sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL, logfile);
 						free(resp);
 						free_request(&req);
 						free_headers(h);
@@ -1039,7 +1078,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -1056,7 +1095,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -1072,7 +1111,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -1084,13 +1123,13 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						char *resp;
 						if(asprintf(&resp, "HTTP/1.1 412 Precondition Failed\r\nDate: %s\r\n\r\n", date) < 0) {
 							char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 							retval = false;
 							free_request(&req);
 							free_headers(h);
 							break;
 						}
-						sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL);
+						sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL, logfile);
 						free(resp);
 						free_request(&req);
 						free_headers(h);
@@ -1104,13 +1143,13 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						char *resp = NULL;
 						if(asprintf(&resp, "HTTP/1.1 304 Not Modified\r\nDate: %s%s%s\r\n\r\n", date, (etag) ? "\r\nETag: " : "", (etag) ? etag : "") < 0) {
 							char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 							retval = false;
 							free_request(&req);
 							free_headers(h);
 							break;
 						}
-						sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL);
+						sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL, logfile);
 						free(resp);
 						free_request(&req);
 						free_headers(h);
@@ -1123,7 +1162,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -1140,7 +1179,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -1156,7 +1195,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -1168,13 +1207,13 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						char *resp;
 						if(asprintf(&resp, "HTTP/1.1 304 Not Modified\r\nDate: %s%s%s\r\n\r\n", date, (etag) ? "\r\nETag: " : "", (etag) ? etag : "") < 0) {
 							char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 							retval = false;
 							free_request(&req);
 							free_headers(h);
 							break;
 						}
-						sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL);
+						sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL, logfile);
 						free(resp);
 						free_request(&req);
 						free_headers(h);
@@ -1190,13 +1229,13 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
 						break;
 					}
-					fprintf(stderr, "LOG: Range: %s\n", range);
+					if(logfile >= 0) dprintf(logfile, "LOG: Range: %s\n", range);
 					char *sv = NULL;
 					char *token = strtok_r(range, "=", &sv);
 					if(!token) {
@@ -1204,7 +1243,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						char *err_resp = "HTTP/1.1 400 Bad Request\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						free_request(&req);
 						free_headers(h);
 						continue;
@@ -1271,7 +1310,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 							err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 							retval = false;
 						}
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						if(retval) free(err_resp);
 						free_request(&req);
 						free_headers(h);
@@ -1283,23 +1322,23 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						reason = "Partial Content";
 					}
 					if(asprintf(&range, "bytes %jd-%jd/%zu", start, end, content_len) < 0) {
-						fprintf(stderr, "ERROR: Failed to create range header");
+						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to create range header");
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
 						break;
 					}
 					if(!update_header(&hdrs, strdup("Content-Range"), range)) {
-						fprintf(stderr, "ERROR: Failed to create range header");
+						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to create range header");
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						free(range);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 						retval = false;
 						free_request(&req);
 						free_headers(h);
@@ -1309,11 +1348,11 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 				}
 				char *resp;
 				if(asprintf(&resp, "HTTP/1.1 %d %s\r\nContent-Length: %zu\r\n", status, reason, content_len) < 0) {
-					fprintf(stderr, "ERROR: Failed to create headers\n");
+					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to create headers\n");
 					if(content_fd >= 0) close(content_fd);
 					free_headers(hdrs);
 					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 					retval = false;
 					free_request(&req);
 					free_headers(h);
@@ -1322,12 +1361,12 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 				if(req.method == GET && range_request) {
 					if(lseek(content_fd, start, SEEK_CUR) < 0) {
 						if(errno == ESPIPE) {
-							if(discard(content_fd, start) < (ssize_t)start) {
+							if(discard(content_fd, start, logfile) < (ssize_t)start) {
 								free(resp);
 								free_headers(hdrs);
 								if(content_fd >= 0) close(content_fd);
 								char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-								sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+								sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 								retval = false;
 								free_request(&req);
 								free_headers(h);
@@ -1338,7 +1377,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 							free_headers(hdrs);
 							if(content_fd >= 0) close(content_fd);
 							char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
-							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL);
+							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 							retval = false;
 							free_request(&req);
 							free_headers(h);
@@ -1346,8 +1385,8 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 						}
 					}
 				}
-				if(!sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL | MSG_MORE)) {
-					fprintf(stderr, "ERROR: Failed to send headers\n");
+				if(!sendall(connfd, resp, strlen(resp), MSG_NOSIGNAL | MSG_MORE, logfile)) {
+					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send headers\n");
 					free(resp);
 					free_headers(hdrs);
 					if(content_fd >= 0) close(content_fd);
@@ -1357,8 +1396,8 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 					break;
 				}
 				free(resp);
-				if(!sendheaders(connfd, hdrs, MSG_NOSIGNAL | ((req.method != HEAD && content_len > 0) ? MSG_MORE : 0))) {
-					fprintf(stderr, "ERROR: Failed to send headers\n");
+				if(!sendheaders(connfd, hdrs, MSG_NOSIGNAL | ((req.method != HEAD && content_len > 0) ? MSG_MORE : 0), logfile)) {
+					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send headers\n");
 					free_headers(hdrs);
 					if(content_fd >= 0) close(content_fd);
 					retval = false;
@@ -1368,7 +1407,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 				}
 				free_headers(hdrs);
 				if(req.method != HEAD && content_len > 0) {
-					if(!sendfileall(connfd, content_fd, content_len)) {
+					if(!sendfileall(connfd, content_fd, content_len, logfile)) {
 						if(errno == EINVAL) {
 							ssize_t rv;
 							while((rv = splice(content_fd, NULL, connfd, NULL, content_len, SPLICE_F_MOVE)) < content_len) {
@@ -1390,7 +1429,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 								content_len -= rv;
 							}
 						} else {
-							fprintf(stderr, "ERROR: Failed to send response body (%d)\n", errno);
+							if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send response body (%d)\n", errno);
 							close_conn = true;
 						}
 					}
@@ -1401,22 +1440,24 @@ bool server(char *directory, struct HTTP_Request_Handlers hls) {
 			}
 			close(connfd);
 			connfd = -1;
+			if(logfile >= 0) close(logfile);
 			return retval;
 		} else {
 			close(connfd);
 			if(!add_pid(&ps, p)) {
-				fprintf(stderr, "Could not add pid\n");
+				if(logfile >= 0) dprintf(logfile, "Could not add pid\n");
 				done = true;
 			}
-			fprintf(stderr, "LOG: pid: %d\n", p);
+			if(logfile >= 0) dprintf(logfile, "LOG: pid: %d\n", p);
 			p = 0;
 		}
 	}
 	if(p > 0) kill(p, SIGTERM);
 	kill_pidlist(ps, SIGTERM);
 	free_pidlist(ps);
+	if(logfile >= 0) close(logfile);
 	if(close(sockfd) < 0) {
-		perror("ERROR: close");
+		if(logfile >= 0) dprintf(logfile, "ERROR: close: %s", strerror(errno));
 		return false;
 	}
 	return true;

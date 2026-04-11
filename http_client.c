@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <fcntl.h>
 
 typedef struct url_list_node *url_list;
 struct url_list_node {
@@ -48,25 +49,25 @@ void free_status(status *st) {
 	st->reason = NULL;
 }
 
-static void *get_in_addr(struct sockaddr *sa) {
-        switch(sa->sa_family) {
-        case AF_INET:
-                // IPv4
-                return &(((struct sockaddr_in*)sa)->sin_addr);
-                break;
-        case AF_INET6:
-                // IPv6
-                return &(((struct sockaddr_in6*)sa)->sin6_addr);
-                break;
-        default:
-                // ???
-                fprintf(stderr, "Unknown family:\t%d\n", sa->sa_family);
-                return NULL;
-                break;
-        }
-}
+//static void *get_in_addr(struct sockaddr *sa, int logfile) {
+//        switch(sa->sa_family) {
+//        case AF_INET:
+//                // IPv4
+//                return &(((struct sockaddr_in*)sa)->sin_addr);
+//                break;
+//        case AF_INET6:
+//                // IPv6
+//                return &(((struct sockaddr_in6*)sa)->sin6_addr);
+//                break;
+//        default:
+//                // ???
+//                if(logfile >= 0) dprintf(logfile, "Unknown family:\t%d\n", sa->sa_family);
+//                return NULL;
+//                break;
+//        }
+//}
 
-static bool parse_status(char *status_line, status *st) {
+static bool parse_status(char *status_line, status *st, int logfile) {
 	char *sv = NULL;
 	char *ver, *codestr, *reason, *v1, *v2;
 	ver = strtok_r(status_line, " ", &sv);
@@ -76,7 +77,7 @@ static bool parse_status(char *status_line, status *st) {
 	reason = strtok_r(NULL, "\r\n", &sv);
 	char *rest;
 	if((rest = strtok_r(NULL, "\n", &sv)) && *rest) {
-                fprintf(stderr, "Error: unable to parse status line.\n\tversion: '%s'\n\tstatus code: '%s'\n\treason phrase: '%s'\n\t extra: '%s'", ver, codestr, reason, rest);
+                if(logfile >= 0) dprintf(logfile, "Error: unable to parse status line.\n\tversion: '%s'\n\tstatus code: '%s'\n\treason phrase: '%s'\n\t extra: '%s'", ver, codestr, reason, rest);
                 return false;
         }
 	char *sv2 = NULL;
@@ -101,7 +102,7 @@ static bool parse_status(char *status_line, status *st) {
 // perfoms a get request to protocol://hostname for location using headers in h on input if not NULL
 // returns status in stat, headers in h, and contents in contents (length in contents_len)
 // return value of true for success, and false otherwise
-static bool _get_request(char *hostname, char *location, char *protocol, char *query, char *frag, status *stat, headers *h, void **contents, uintmax_t *contents_len) {
+static bool _get_request(char *hostname, char *location, char *protocol, char *query, char *frag, status *stat, headers *h, void **contents, uintmax_t *contents_len, int logfile) {
 	struct addrinfo hints = {0}, *servinfo;
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
@@ -112,7 +113,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	char *dnamep = decoded_name;
 	if(!url_decode(hostname, &dnamep, strlen(hostname) + 1)) return false;
 	if((rv = getaddrinfo(decoded_name, protocol, &hints, &servinfo)) != 0) {
-		fprintf(stderr, "Error: %s\n", gai_strerror(rv));
+		if(logfile >= 0) dprintf(logfile, "Error: %s\n", gai_strerror(rv));
 		free_headers(*h);
 		return false;
 	}
@@ -133,7 +134,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	freeaddrinfo(servinfo);
 
 	if(p == NULL) {
-		fprintf(stderr, "Error: could not find hostname: '%s', with protocol: '%s'\n", decoded_name, protocol);
+		if(logfile >= 0) dprintf(logfile, "Error: could not find hostname: '%s', with protocol: '%s'\n", decoded_name, protocol);
 		free_headers(*h);
 		close(sockfd);
 		return false;
@@ -167,15 +168,15 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	*h = NULL;
 	char *request;
 	if(asprintf(&request, "GET %s%s%s%s%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n%s\r\n", location, (query)?"?":"", (query)?query:"", (frag)?"#":"", (frag)?frag:"", hostname, hdrs) == -1) {
-		fprintf(stderr, "Error: failed to create request string.\n");
+		if(logfile >= 0) dprintf(logfile, "Error: failed to create request string.\n");
 		close(sockfd);
 		free(hdrs);
 		return false;
 	}
 	free(hdrs);
 	size_t len = strlen(request);
-	if(!sendall(sockfd, request, len, 0)) {
-		fprintf(stderr, "Error: failed to send request.\n");
+	if(!sendall(sockfd, request, len, 0, logfile)) {
+		if(logfile >= 0) dprintf(logfile, "Error: failed to send request.\n");
 		close(sockfd);
 		free(request);
 		return false;
@@ -186,15 +187,15 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 
 	char *statusLine = NULL;
 	size_t stLen = 0;
-	if(recvline(sockfd, &statusLine, &stLen)) {
-		perror("recvline");
+	if(recvline(sockfd, &statusLine, &stLen, logfile)) {
+		if(logfile >= 0) dprintf(logfile, "recvline: %s", strerror(errno));
 		close(sockfd);
 		free(statusLine);
 		return false;
 	}
 
-	if(!parse_status(statusLine, stat)) {
-		fprintf(stderr, "Error: failed to parse status: %s\n", statusLine);
+	if(!parse_status(statusLine, stat, logfile)) {
+		if(logfile >= 0) dprintf(logfile, "Error: failed to parse status: %s\n", statusLine);
 		close(sockfd);
 		free(statusLine);
 		return false;
@@ -210,8 +211,8 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		return true;
 	}
 
-	if(read_headers(sockfd, h)) {
-		fprintf(stderr, "Error: failed to read headers.\n");
+	if(read_headers(sockfd, h, logfile)) {
+		if(logfile >= 0) dprintf(logfile, "Error: failed to read headers.\n");
 		close(sockfd);
 		free_status(stat);
 		return false;
@@ -219,8 +220,8 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 
 	if(contains_header(*h, "Transfer-Encoding") && strncmp(get_header(*h, "Transfer-Encoding"), "chunked", 7) == 0) {
 		// chunked encoding
-		if(read_chunked(sockfd, (char**)contents, contents_len, false)) {
-			fprintf(stderr, "Error: failed to read chunked encoding\n");
+		if(read_chunked(sockfd, (char**)contents, contents_len, false, logfile)) {
+			if(logfile >= 0) dprintf(logfile, "Error: failed to read chunked encoding\n");
 			close(sockfd);
 			free_status(stat);
 			free_headers(*h);
@@ -235,8 +236,8 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 			free_headers(*h);
 			return false;
 		}
-		if(recvall(sockfd, *contents, *contents_len, 0)) {
-			fprintf(stderr, "Error: failed to read content with length: %ld\n", *contents_len);
+		if(recvall(sockfd, *contents, *contents_len, 0, logfile)) {
+			if(logfile >= 0) dprintf(logfile, "Error: failed to read content with length: %ld\n", *contents_len);
 			close(sockfd);
 			free_status(stat);
 			free_headers(*h);
@@ -254,7 +255,7 @@ static char *last_protocol = NULL, *last_hostname = NULL, *last_location = NULL,
 // sets hostname and location
 // only sets protocol if one was specified in the url
 // only sets query and fragment if they were specified
-static bool parse_url(char *url, char **hostname, char **location, char **protocol, char **query, char **fragment) {
+static bool parse_url(char *url, char **hostname, char **location, char **protocol, char **query, char **fragment, int logfile) {
 	if(!url) return false;
 	*hostname = NULL;
 	*location = NULL;
@@ -269,14 +270,14 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		*tmp = '\0';
 		t = tmpurl;
 		if(tmp == tmpurl) {
-			fprintf(stderr, "Invalid url (had '://' but no scheme): %s\n", url);
+			if(logfile >= 0) dprintf(logfile, "Invalid url (had '://' but no scheme): %s\n", url);
 			free(tmpurl_start);
 			return false;
 		}
 		tmpurl = tmp + 1;
 		*protocol = strdup(t);
 		if(!*protocol) {
-			perror("strdup");
+			if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
 			free(tmpurl_start);
 			return false;
 		}
@@ -287,7 +288,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 	if(*tmpurl == '/' && *(tmpurl + 1) == '/') {
 		t = strtok_r(tmpurl, "/", &sv);
 		if(!t) {
-			fprintf(stderr, "Invalid url (had '//' but no hostname): %s\n", url);
+			if(logfile >= 0) dprintf(logfile, "Invalid url (had '//' but no hostname): %s\n", url);
 			free(tmpurl_start);
 			if(*protocol != last_protocol) free(*protocol);
 			*protocol = NULL;
@@ -295,7 +296,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		}
 		*hostname = strdup(t);
 		if(!*hostname) {
-			perror("strdup");
+			if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
 			free(tmpurl_start);
 			if(*protocol != last_protocol) free(*protocol);
 			*protocol = NULL;
@@ -310,7 +311,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		sv = NULL;
 	} else {
 		if(!(last_hostname && *last_hostname)) {
-			fprintf(stderr, "Invalid url (relative path but no base hostname): %s\n", url);
+			if(logfile >= 0) dprintf(logfile, "Invalid url (relative path but no base hostname): %s\n", url);
 			free(tmpurl_start);
 			if(*protocol != last_protocol) free(*protocol);
 			*protocol = NULL;
@@ -325,7 +326,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		if(*t == '/') {
 			*location = strdup(t);
 			if(!*location) {
-				perror("strdup");
+				if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
 				if(*protocol != last_protocol) free(*protocol);
 				*protocol = NULL;
 				if(*hostname != last_hostname) free(*hostname);
@@ -337,7 +338,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		} else {
 			char *tmp_location = (char*)malloc(strlen(t)+2);
 			if(!tmp_location) {
-				perror("malloc");
+				if(logfile >= 0) dprintf(logfile, "malloc: %s", strerror(errno));
 				if(*protocol != last_protocol) free(*protocol);
 				*protocol = NULL;
 				if(*hostname != last_hostname) free(*hostname);
@@ -350,7 +351,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 			if(strlen(tmp_location) > 1 && tmp_location[strlen(tmp_location) - 1] == '/') tmp_location[strlen(tmp_location) - 1] = '\0';
 			if(last_location && *last_location && ((strlen(last_location) == 1) ? *last_location != '/' : true)) {
 				if(*last_location != '/') {
-					fprintf(stderr, "Error: invalid last location: %s\n", last_location);
+					if(logfile >= 0) dprintf(logfile, "Error: invalid last location: %s\n", last_location);
 					if(*protocol != last_protocol) free(*protocol);
 					*protocol = NULL;
 					if(*hostname != last_hostname) free(*hostname);
@@ -362,7 +363,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 				*strrchr(last_location, '/') = '\0';
 				*location = malloc(strlen(last_location) + strlen(tmp_location) + 1);
 				if(!*location) {
-					perror("malloc");
+					if(logfile >= 0) dprintf(logfile, "malloc: %s", strerror(errno));
 					if(*protocol != last_protocol) free(*protocol);
 					*protocol = NULL;
 					if(*hostname != last_hostname) free(*hostname);
@@ -390,7 +391,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		t = strtok_r(NULL, "#", &sv);
 		*query = strdup(t);
 		if(!*query) {
-			perror("strdup");
+			if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
 			free(tmpurl_start);
 			if(*protocol != last_protocol) free(*protocol);
 			*protocol = NULL;
@@ -405,7 +406,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		t = strtok_r(NULL, "", &sv);
 		*fragment = strdup(t);
 		if(!*fragment) {
-			perror("strdup");
+			if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
 			free(tmpurl_start);
 			if(*protocol != last_protocol) free(*protocol);
 			*protocol = NULL;
@@ -430,7 +431,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 	if(*query && !tmp_last_query) err = errno;
 	if(*protocol && !tmp_last_protocol || !tmp_last_hostname || *location && !tmp_last_location || *query && !tmp_last_query) {
 		errno = err;
-		perror("strdup");
+		if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
 		if(*protocol != last_protocol) free(*protocol);
 		*protocol = NULL;
 		if(*hostname != last_hostname) free(*hostname);
@@ -472,9 +473,16 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 // perfoms a get request to url using headers in h on input if not NULL
 // returns status in stat, headers in h, and contents in contents (length in contents_len)
 // return value of true for success, and false otherwise
-bool get_request(char *url, status *stat, headers *h, void **content, size_t *content_len, bool redir) {
+bool get_request(char *url, status *stat, headers *h, void **content, size_t *content_len, bool redir, char *log) {
+	int logfile = -1;
+	if(log) {
+		// open log file
+		logfile = open(log, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+		if(logfile < 0) return false;
+	}
 	char *protocol, *hostname, *location, *query, *fragment;
-	if(!parse_url(url, &hostname, &location, &protocol, &query, &fragment) || !hostname) {
+	if(!parse_url(url, &hostname, &location, &protocol, &query, &fragment, logfile) || !hostname) {
+		if(logfile >= 0) close(logfile);
 		free(last_protocol);
 		free(last_hostname);
 		free(last_location);
@@ -482,7 +490,8 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 		return false;
 	}
 	if(!isdigit(*protocol) && strcmp(protocol, "http")) {
-		fprintf(stderr, "Error: unsupported protocol: '%s'\n", protocol);
+		if(logfile >= 0) dprintf(logfile, "Error: unsupported protocol: '%s'\n", protocol);
+		if(logfile >= 0) close(logfile);
 		if(hostname) free(hostname);
 		if(location) free(location);
 		if(protocol) free(protocol);
@@ -494,8 +503,9 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 		free(last_query);
 		return false;
 	}
-	bool retv = _get_request(hostname, location, protocol, query, fragment, stat, h, content, content_len);
+	bool retv = _get_request(hostname, location, protocol, query, fragment, stat, h, content, content_len, logfile);
 	if(!retv) {
+		if(logfile >= 0) close(logfile);
 		if(hostname) free(hostname);
 		if(location) free(location);
 		if(protocol) free(protocol);
@@ -515,7 +525,8 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 	url_list l = NULL;
 	url = strdup(url);
 	if(!url) {
-		perror("strdup");
+		if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
+		if(logfile >= 0) close(logfile);
 		free(last_protocol);
 		free(last_hostname);
 		free(last_location);
@@ -526,7 +537,8 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 		return false;
 	}
 	if(!add_url(&l, url)) {
-		fprintf(stderr, "Error: failed to add url to list\n");
+		if(logfile >= 0) dprintf(logfile, "Error: failed to add url to list\n");
+		if(logfile >= 0) close(logfile);
 		free(last_protocol);
 		free(last_hostname);
 		free(last_location);
@@ -542,12 +554,12 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 		if(!tmp) break;
 		url = strdup(tmp);
 		if(!url) {
-			perror("strdup");
+			if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
 			retv = false;
 			break;
 		}
 		if(contains_url(l, url)) {
-			fprintf(stderr, "Error: redirection loop to %s\n", url);
+			if(logfile >= 0) dprintf(logfile, "Error: redirection loop to %s\n", url);
 			free(url);
 			retv = false;
 			break;
@@ -556,13 +568,13 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 		headers new_h = NULL;
 		void *new_content = NULL;
 		uintmax_t new_content_len = 0;
-		if(!parse_url(url, &hostname, &location, &protocol, &query, &fragment) || !hostname) {
+		if(!parse_url(url, &hostname, &location, &protocol, &query, &fragment, logfile) || !hostname) {
 			free(url);
 			retv = false;
 			break;
 		}
 		if(!isdigit(*protocol) && strcmp(protocol, "http")) {
-			fprintf(stderr, "Error: unsupported protocol: '%s'\n", protocol);
+			if(logfile >= 0) dprintf(logfile, "Error: unsupported protocol: '%s'\n", protocol);
 			if(hostname) free(hostname);
 			if(location) free(location);
 			if(protocol) free(protocol);
@@ -572,14 +584,14 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 			retv = false;
 			break;
 		}
-		if(!_get_request(hostname, location, protocol, query, fragment, &new_stat, &new_h, &new_content, &new_content_len)) {
+		if(!_get_request(hostname, location, protocol, query, fragment, &new_stat, &new_h, &new_content, &new_content_len, logfile)) {
 			if(hostname) free(hostname);
 			if(location) free(location);
 			if(protocol) free(protocol);
 			if(query) free(query);
 			if(fragment) free(fragment);
 			free(url);
-			fprintf(stderr, "Error: failed to redirect to new location: %s\n", url);
+			if(logfile >= 0) dprintf(logfile, "Error: failed to redirect to new location: %s\n", url);
 			retv = false;
 			break;
 		}
@@ -597,7 +609,7 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 		*content_len = new_content_len;
 		if(new_stat.code >= 400) break;
 		if(!add_url(&l, url)) {
-			fprintf(stderr, "Error: failed to add url to list\n");
+			if(logfile >= 0) dprintf(logfile, "Error: failed to add url to list\n");
 			free(url);
 			retv = false;
 			break;
@@ -608,6 +620,7 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 	free(last_location);
 	free(last_query);
 	free_url_list(l);
+	if(logfile >= 0) close(logfile);
 	if(!retv) {
 		free_status(stat);
 		free_headers(*h);

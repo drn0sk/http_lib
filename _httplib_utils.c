@@ -63,7 +63,7 @@ bool url_encode(char *src, char **dst, size_t len) {
 	return true;
 }
 
-static ssize_t recv_retry_err(int sock, void *msg, size_t len, int flags) {
+static ssize_t recv_retry_err(int sock, void *msg, size_t len, int flags, int logfile) {
 	ssize_t retval;
 	while(true) {
 		retval = recv(sock, msg, len, flags);
@@ -71,7 +71,7 @@ static ssize_t recv_retry_err(int sock, void *msg, size_t len, int flags) {
 			switch(errno) {
 			case EAGAIN:
 			case ENOMEM:
-				fprintf(stderr, "LOG: trying again\n");
+				if(logfile >= 0) dprintf(logfile, "LOG: trying again\n");
 				continue;
 			}
 			return -1;
@@ -82,11 +82,13 @@ static ssize_t recv_retry_err(int sock, void *msg, size_t len, int flags) {
 
 // returns -1 on error or if recv was interrupted, 0 if sock was closed, >0 on success
 // sets *len to the total number of bytes read
-static ssize_t recv_retry(int sock, void *msg, size_t *len, int flags) {
+// if logfile >= 0: prints logging information to logfile
+static ssize_t recv_retry(int sock, void *msg, size_t *len, int flags, int logfile) {
 	size_t read = 0;
 	ssize_t retval;
 	while(read < *len) {
-		retval = recv_retry_err(sock, (uint8_t*)msg + read, *len - read, flags);
+		if(read > 0 && logfile >= 0) dprintf(logfile, "LOG: read only %zu of %zu bytes so far, reading the rest\n", read, *len);
+		retval = recv_retry_err(sock, (uint8_t*)msg + read, *len - read, flags, logfile);
 		if(retval <= 0) {
 			*len = read;
 			return retval;
@@ -98,14 +100,14 @@ static ssize_t recv_retry(int sock, void *msg, size_t *len, int flags) {
 }
 
 // returns -1 on error or if recv was interrupted, 0 on success, and 1 if connection was closed
-int recvall(int sock, void *msg, size_t len, int flags) {
-	ssize_t retval = recv_retry(sock, msg, &len, flags | MSG_WAITALL);
+int recvall(int sock, void *msg, size_t len, int flags, int logfile) {
+	ssize_t retval = recv_retry(sock, msg, &len, flags | MSG_WAITALL, logfile);
 	return (retval < 0) ? retval : !retval;
 }
 
 // returns -1 on error or if recv was interrupted, 0 if sock was closed, >0 on success
-ssize_t discard(int sockfd, size_t size) {
-	return recv_retry(sockfd, NULL, &size, MSG_TRUNC | MSG_WAITALL);
+ssize_t discard(int sockfd, size_t size, int logfile) {
+	return recv_retry(sockfd, NULL, &size, MSG_TRUNC | MSG_WAITALL, logfile);
 }
 
 // any function where grow(n) > n
@@ -122,7 +124,7 @@ void *reallocfree(void *ptr, size_t size) {
 
 #define BUFSIZE 100
 // returns -1 on error or if recv was interrupted, 0 on success, and 1 if connection was closed
-int recvline(int sock, char **msg, size_t *len) {
+int recvline(int sock, char **msg, size_t *len, int logfile) {
 	if(!*msg) *len = 0;
 	static char buf[BUFSIZE] = {0};
 	ssize_t buf_len = BUFSIZE;
@@ -136,15 +138,12 @@ int recvline(int sock, char **msg, size_t *len) {
 				*msg = reallocfree(*msg, *len); // allocate space for the line and the terminating null byte
 				if(!*msg) return -1;
 			}
-			retval = recvall(sock, *msg + line_len - buf_len, buf_len, 0);
+			retval = recvall(sock, *msg + line_len - buf_len, buf_len, 0, logfile);
 			if(retval) return retval;
 		}
-		buf_len = recv_retry_err(sock, buf, BUFSIZE, MSG_PEEK);
+		buf_len = recv_retry_err(sock, buf, BUFSIZE, MSG_PEEK, logfile);
 		if(buf_len < 0) return -1;
-		if(buf_len == 0) {
-			fprintf(stderr, "LOG: closed\n");
-			return 1;
-		}
+		if(buf_len == 0) return 1;
 		line_len += buf_len;
 		nl = memchr(buf, '\n', buf_len);
 	} while(!nl);
@@ -157,14 +156,14 @@ int recvline(int sock, char **msg, size_t *len) {
 		if(!*msg) return -1;
 	}
 	(*msg)[line_len] = '\0';
-	return recvall(sock, *msg + line_len - buf_len, buf_len, 0);
+	return recvall(sock, *msg + line_len - buf_len, buf_len, 0, logfile);
 }
 
-bool sendall(int sock, const void *msg, size_t len, int flags) {
+bool sendall(int sock, const void *msg, size_t len, int flags, int logfile) {
 	size_t sent = 0;
 	ssize_t retval;
 	while(sent < len) {
-		if(sent > 0) fprintf(stderr, "LOG: sent only %zu of %zu bytes, sending the rest\n", sent, len);
+		if(sent > 0 && logfile >= 0) dprintf(logfile, "LOG: sent only %zu of %zu bytes so far, sending the rest\n", sent, len);
 		retval = send(sock, (uint8_t*)msg + sent, len - sent, flags);
 		if(retval < 0) {
 			switch(errno) {
@@ -173,7 +172,7 @@ bool sendall(int sock, const void *msg, size_t len, int flags) {
 			case ENOBUFS:
 			case ENOMEM:
 			case ECONNRESET:
-				fprintf(stderr, "LOG: trying again\n");
+				if(logfile >= 0) dprintf(logfile, "LOG: trying again\n");
 				continue;
 			}
 			return false;
@@ -270,7 +269,7 @@ char *trim(char *s) {
 }
 
 // returns -2 if headers were invalid, -1 on other errors or if recv was interrupted, 0 if successful, 1 if connection was closed
-int read_headers(int sfd, headers *h) {
+int read_headers(int sfd, headers *h, int logfile) {
 	char *line = NULL, *i;
 	size_t len;
 	headers hdrs = NULL;
@@ -278,7 +277,7 @@ int read_headers(int sfd, headers *h) {
 	int retval;
 	char *header, *value;
 	while(true) {
-		if((retval = recvline(sfd, &line, &len))) {
+		if((retval = recvline(sfd, &line, &len, logfile))) {
 			free_headers(hdrs);
 			break;
 		}
@@ -360,7 +359,7 @@ bool add_chunk(chunks *c, size_t size, char *data) {
 }
 
 // returns -1 on error or if recv was interrupted, 0 on success, and 1 if connection was closed
-int read_chunked(int sockfd, char **content, size_t *content_len, bool discard) {
+int read_chunked(int sockfd, char **content, size_t *content_len, bool discard, int logfile) {
 	int retval;
 	char crlf[2];
 	chunks ch = NULL;
@@ -368,7 +367,7 @@ int read_chunked(int sockfd, char **content, size_t *content_len, bool discard) 
 	size_t len = 0;
 	char *buff = NULL;
 	while(true) {
-		if((retval = recvline(sockfd, &line, &len))) {
+		if((retval = recvline(sockfd, &line, &len, logfile))) {
 			free_chunks(ch);
 			free(line);
 			return retval;
@@ -386,7 +385,7 @@ int read_chunked(int sockfd, char **content, size_t *content_len, bool discard) 
 			free(line);
 			return -1;
 		}
-		if((retval = recvall(sockfd, buff, size, 0))) {
+		if((retval = recvall(sockfd, buff, size, 0, logfile))) {
 			free_chunks(ch);
 			free(line);
 			free(buff);
@@ -398,14 +397,14 @@ int read_chunked(int sockfd, char **content, size_t *content_len, bool discard) 
 			free(buff);
 			return -1;
 		}
-		if((retval = recvall(sockfd, &crlf, 2, 0)) || strncmp((char*)&crlf, "\r\n", 2)) {
+		if((retval = recvall(sockfd, &crlf, 2, 0, logfile)) || strncmp((char*)&crlf, "\r\n", 2)) {
 			free_chunks(ch);
 			free(line);
 			return (retval) ? retval : -1;
 		}
 	}
 	do {
-		if((retval = recvline(sockfd, &line, &len))) {
+		if((retval = recvline(sockfd, &line, &len, logfile))) {
 			free_chunks(ch);
 			free(line);
 			return retval;
