@@ -2,7 +2,6 @@
 
 .PHONY : all release debug shared static clean clean_all clean_objects clean_static clean_shared install install-strip install_shared install_static install_headers uninstall
 
-CFLAGS = -g -O # defaults if CFLAGS is not explicitly set
 RELEASE_CFLAGS = -O3 -flto
 DEBUG_CFLAGS = -ggdb -Og
 ALL_CFLAGS =
@@ -47,7 +46,7 @@ HEADERS := httplib.h $(OBJECTS:.o=.h)
 OBJECTS := $(addprefix $(BUILD_DIR)/,$(OBJECTS))
 
 VERSION_MAJOR := 2
-VERSION_MINOR := 0
+VERSION_MINOR := 1
 SONAME := libhttp.so.$(VERSION_MAJOR)
 REALNAME := $(SONAME).$(VERSION_MINOR)
 STATICNAME := libhttp-$(VERSION_MAJOR).$(VERSION_MINOR).a
