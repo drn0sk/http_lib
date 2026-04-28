@@ -69,7 +69,6 @@ static ssize_t recv_retry_err(int sock, void *msg, size_t len, int flags, int lo
 		retval = recv(sock, msg, len, flags);
 		if(retval < 0) {
 			switch(errno) {
-			case EAGAIN:
 			case ENOMEM:
 				if(logfile >= 0) dprintf(logfile, "LOG: trying again\n");
 				continue;
@@ -167,7 +166,6 @@ bool sendall(int sock, const void *msg, size_t len, int flags, int logfile) {
 		retval = send(sock, (uint8_t*)msg + sent, len - sent, flags);
 		if(retval < 0) {
 			switch(errno) {
-			case EAGAIN:
 			case EINTR:
 			case ENOBUFS:
 			case ENOMEM:

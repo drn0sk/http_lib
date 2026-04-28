@@ -13,6 +13,7 @@
 #include <signal.h>
 #include <sys/sendfile.h>
 #include <time.h>
+#include <sys/time.h>
 #include <fcntl.h>
 
 static void free_query(query_list q) {
@@ -102,7 +103,6 @@ static bool sendfileall(int out, int in, size_t count, int logfile) {
 		retval = sendfile(out, in, NULL, count - sent);
 		if(retval < 0) {
 			switch(errno) {
-			case EAGAIN:
 			case ENOMEM:
 				if(logfile >= 0) dprintf(logfile, "LOG: Trying again\n");
 				continue;
@@ -283,8 +283,19 @@ static void cleanup(int _) {
 
 bool child = false;
 
+// default port is 80
+// if not specified at compile time
 #ifndef PORT
 #define PORT 80
+#endif
+
+// default timeout of 1 hour
+// if not specified at compile time
+#ifndef TIMEOUT
+#define TIMEOUT 3600
+#endif
+#ifndef TIMEOUT_USEC
+#define TIMEOUT_USEC 0
 #endif
 
 // set directory to NULL to serve current directory
@@ -299,6 +310,9 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int po
 		logfile = open(log, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
 		if(logfile < 0) return false;
 	}
+	struct timeval timeout = {0};
+	timeout.tv_sec = TIMEOUT;
+	timeout.tv_usec = TIMEOUT_USEC;
 	struct sigaction siga = {0};
 	siga.sa_handler = &exit_loop;
 	if(sigaction(SIGINT, &siga, NULL) < 0) {
@@ -424,8 +438,54 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int po
 				if(logfile >= 0) close(logfile);
 				return false;
 			}
+			if(setsockopt(connfd, SOL_SOCKET, SO_RCVTIMEO, (const void*)&timeout, sizeof(timeout)) == -1) {
+				if(logfile >= 0) dprintf(logfile, "ERROR: failed to set timeout on socket\n");
+				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
+				sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
+				close(connfd);
+				connfd = -1;
+				if(logfile >= 0) close(logfile);
+				return false;
+			}
+			if(setsockopt(connfd, SOL_SOCKET, SO_SNDTIMEO, (const void*)&timeout, sizeof(timeout)) == -1) {
+				if(logfile >= 0) dprintf(logfile, "ERROR: failed to set timeout on socket\n");
+				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
+				sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
+				close(connfd);
+				connfd = -1;
+				if(logfile >= 0) close(logfile);
+				return false;
+			}
+			// get current BOOTTIME time
+			struct timespec tmp;
+			if(clock_gettime(CLOCK_BOOTTIME, &tmp) < 0) {
+				if(logfile >= 0) dprintf(logfile, "ERROR: failed to get time\n");
+				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
+				sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
+				close(connfd);
+				connfd = -1;
+				if(logfile >= 0) close(logfile);
+				return false;
+			}
+			struct timeval start, current, tmp2;
+			// convert timespec to timeval and save it as the initial time
+			TIMESPEC_TO_TIMEVAL(&start, &tmp);
 			bool retval = true;
 			while(!close_conn) {
+				// get current BOOTTIME time
+				if(clock_gettime(CLOCK_BOOTTIME, &tmp) < 0) {
+					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to get time\n");
+					char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
+					sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
+					retval = false;
+					break;
+				}
+				// convert timespec to timeval and save it as the current time
+				TIMESPEC_TO_TIMEVAL(&current, &tmp);
+				// check if current - start >= timeout
+				timersub(&current, &start, &tmp2);
+				// if it is, set close_conn
+				if(timercmp(&tmp2, &timeout, >=)) close_conn = true;
 				char *respLine = NULL;
 				size_t rspLen = 0;
 				int recvd;
@@ -435,6 +495,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int po
 						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to recv line\n");
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 						sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
+						retval = false;
 					}
 					break;
 				}
@@ -445,6 +506,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int po
 							if(logfile >= 0) dprintf(logfile, "ERROR: Failed to recv line\n");
 							char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 							sendall(connfd, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
+							retval = false;
 						}
 						break;
 					}
@@ -1419,7 +1481,6 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int po
 								}
 								if(rv < 0) {
 									switch(errno) {
-									case EAGAIN:
 									case ENOMEM:
 										continue;
 									}

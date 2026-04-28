@@ -46,14 +46,16 @@ HEADERS := httplib.h $(OBJECTS:.o=.h)
 OBJECTS := $(addprefix $(BUILD_DIR)/,$(OBJECTS))
 
 VERSION_MAJOR := 2
-VERSION_MINOR := 1
+VERSION_MINOR := 2
 SONAME := libhttp.so.$(VERSION_MAJOR)
 REALNAME := $(SONAME).$(VERSION_MINOR)
 STATICNAME := libhttp-$(VERSION_MAJOR).$(VERSION_MINOR).a
 
+MACROS = $(if $(PORT),-D'PORT=$(PORT)') $(if $(TIMEOUT),-D'TIMEOUT=$(TIMEOUT)') $(if $(TIMEOUT_USEC),-D'TIMEOUT_USEC=$(TIMEOUT_USEC)')
+
 shared : $(BUILD_DIR)/$(REALNAME)
 $(BUILD_DIR)/$(REALNAME) : $(HEADERS) $(SOURCES) | $(BUILD_DIR)
-	$(CC) -shared -fPIC -Wl,-soname,$(SONAME) $(if $(PORT),-D'PORT=$(PORT)') $(CPPFLAGS) $(ALL_CFLAGS) $(LDFLAGS) $(SOURCES) -o $(BUILD_DIR)/$(REALNAME) $(LDLIBS)
+	$(CC) -shared -fPIC -Wl,-soname,$(SONAME) $(MACROS) $(CPPFLAGS) $(ALL_CFLAGS) $(LDFLAGS) $(SOURCES) -o $(BUILD_DIR)/$(REALNAME) $(LDLIBS)
 
 AR = gcc-ar
 ARFLAGS = rvcs
@@ -64,7 +66,7 @@ $(BUILD_DIR)/$(STATICNAME) : $(OBJECTS)
 $(OBJECTS) : httplib.h _httplib_utils.h | $(BUILD_DIR)
 $(OBJECTS) : $(BUILD_DIR)/%.o : %.h
 $(OBJECTS) : $(BUILD_DIR)/%.o : %.c
-	$(CC) -c $(if $(PORT),-D'PORT=$(PORT)') $(CPPFLAGS) $(ALL_CFLAGS) $< -o $@
+	$(CC) -c $(MACROS) $(CPPFLAGS) $(ALL_CFLAGS) $< -o $@
 $(BUILD_DIR) :
 	-mkdir $(BUILD_DIR)
 
