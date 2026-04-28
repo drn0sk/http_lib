@@ -273,8 +273,11 @@ static void exit_loop(int _) {
 	done = true;
 }
 
+static int logfd = -1;
 static void chld(int sig, siginfo_t *info, void *uc) {
-	if(info->si_code == CLD_EXITED && info->si_status) done = true;
+	if(info->si_code == CLD_EXITED && info->si_status && logfd >= 0) {
+		dprintf(logfd, "ERROR: child (%jd) exited on error with code: %d/n", (intmax_t)info->si_pid, info->si_status);
+	}
 }
 
 static void cleanup(int _) {
@@ -339,6 +342,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int po
 	memset(&siga, 0, sizeof(struct sigaction));
 	siga.sa_sigaction = chld;
 	siga.sa_flags = SA_NOCLDWAIT | SA_SIGINFO;
+	logfd = logfile;
 	if(sigaction(SIGCHLD, &siga, NULL) < 0) {
 		if(logfile >= 0) {
 			dprintf(logfile, "Error: sigaction SIGCHLD: %s", strerror(errno));
