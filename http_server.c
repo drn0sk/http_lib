@@ -301,10 +301,7 @@ bool child = false;
 #define TIMEOUT_USEC 0
 #endif
 
-// set directory to NULL to serve current directory
-// since POST requests are optional, set hls.post_req_handler to NULL if they're not supported
-// hls.get_req_handler must be set to a valid pointer, since GET requests are required
-bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int port) {
+bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int port, struct timeval timeout) {
 	if(!hls.get_req_handler) return false;
 	if(port < 0) port = PORT;
 	int logfile = -1;
@@ -313,9 +310,10 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int po
 		logfile = open(log, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
 		if(logfile < 0) return false;
 	}
-	struct timeval timeout = {0};
-	timeout.tv_sec = TIMEOUT;
-	timeout.tv_usec = TIMEOUT_USEC;
+	if(timeout.tv_sec < 0) {
+		timeout.tv_sec = TIMEOUT;
+		timeout.tv_usec = TIMEOUT_USEC;
+	}
 	struct sigaction siga = {0};
 	siga.sa_handler = &exit_loop;
 	if(sigaction(SIGINT, &siga, NULL) < 0) {
