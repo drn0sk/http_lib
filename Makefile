@@ -94,19 +94,19 @@ install-strip : STRIP = 1
 install-strip : install
 install_shared : shared | $(DESTDIR)$(libdir)/
 	$(INSTALL_PROGRAM) $(if $(STRIP),-s) $(BUILD_DIR)/$(REALNAME) $(DESTDIR)$(libdir)/
-	$(LDCONFIG) -r $(DESTDIR) -n $(libdir)/
+	$(LDCONFIG) $(if $(DESTDIR),-r $(DESTDIR)) -n $(libdir)/
 	ln -s $(SONAME) $(DESTDIR)$(libdir)/libhttp.so
 install_static : static | $(DESTDIR)$(libdir)/
 	$(INSTALL_DATA) $(if $(STRIP),-s) $(BUILD_DIR)/$(STATICNAME) $(DESTDIR)$(libdir)/
 $(DESTDIR)$(libdir)/ :
 	$(INSTALL) -d $(DESTDIR)$(libdir)/
-install_headers : | $(DESTDIR)$(includedir)/http_lib/
-	$(INSTALL_DATA) $(filter-out _httplib_utils.h,$(HEADERS)) $(DESTDIR)$(includedir)/http_lib/
-$(DESTDIR)$(includedir)/http_lib/ :
-	$(INSTALL) -d $(DESTDIR)$(includedir)/http_lib/
+install_headers : | $(DESTDIR)$(includedir)/http_lib-$(VERSION_MAJOR)/
+	$(INSTALL_DATA) $(filter-out _httplib_utils.h,$(HEADERS)) $(DESTDIR)$(includedir)/http_lib-$(VERSION_MAJOR)/
+$(DESTDIR)$(includedir)/http_lib-$(VERSION_MAJOR)/ :
+	$(INSTALL) -d $(DESTDIR)$(includedir)/http_lib-$(VERSION_MAJOR)/
 uninstall :
 	-rm $(DESTDIR)$(libdir)/$(REALNAME)
 	-rm $(DESTDIR)$(libdir)/$(SONAME)
 	-rm $(DESTDIR)$(libdir)/libhttp.so
 	-rm $(DESTDIR)$(libdir)/$(STATICNAME)
-	-rm -r $(DESTDIR)$(includedir)/http_lib
+	-rm -r $(DESTDIR)$(includedir)/http_lib-$(VERSION_MAJOR)
