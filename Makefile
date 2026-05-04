@@ -94,7 +94,7 @@ install-strip : STRIP = 1
 install-strip : install
 install_shared : shared | $(DESTDIR)$(libdir)/
 	$(INSTALL_PROGRAM) $(if $(STRIP),-s) $(BUILD_DIR)/$(REALNAME) $(DESTDIR)$(libdir)/
-	$(LDCONFIG) -r $(DESTDIR) -n $(libdir)/
+	$(LDCONFIG) $(if $(DESTDIR),-r $(DESTDIR)) -n $(libdir)/
 	ln -s $(SONAME) $(DESTDIR)$(libdir)/libhttp.so
 install_static : static | $(DESTDIR)$(libdir)/
 	$(INSTALL_DATA) $(if $(STRIP),-s) $(BUILD_DIR)/$(STATICNAME) $(DESTDIR)$(libdir)/
