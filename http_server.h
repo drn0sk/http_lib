@@ -40,9 +40,14 @@ int (*post_req_handler)(char *target, query_list q, char *directory, char *reque
 extern bool child;
 
 // takes a char *directory to serve
+// set directory to NULL to serve current directory
+// since POST requests are optional, set hls.post_req_handler to NULL if they're not supported
+// hls.get_req_handler must be set to a valid pointer, since GET requests are required
 // if log is not NULL error messages and other information is output to it, otherwise nothing is output
 // if port is positive it is used as the port to listen on, otherwise the compiled in default is used
+// timeout specifies the timeout for the children created to handle requests
+// set timeout.tv_sec to a negative value to use the compiled in default, setting timeout to 0 means no timeout
 // returns true on successful termination or false on error
-bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int port);
+bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int port, struct timeval timeout);
 
 #endif /* HTTP_SERVER */
