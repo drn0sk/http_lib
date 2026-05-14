@@ -266,7 +266,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 	char *tmpurl_start = strdup(url);
 	char *tmpurl = tmpurl_start;
 	if(!tmpurl) return false;
-	if(tmp = strstr(tmpurl, "://")) {
+	if((tmp = strstr(tmpurl, "://"))) {
 		*tmp = '\0';
 		t = tmpurl;
 		if(tmp == tmpurl) {
