@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <openssl/ssl.h>
+#include <unistd.h>
 
 bool url_decode(char *src, char **dst, size_t len) {
 	if(!src) return false;
@@ -63,26 +65,49 @@ bool url_encode(char *src, char **dst, size_t len) {
 	return true;
 }
 
-static ssize_t recv_retry_err(int sock, void *msg, size_t len, int flags, int logfile) {
+static ssize_t recv_retry_err(conn_sock sock, void *msg, size_t len, int flags, int logfile) {
 	ssize_t retval;
+	size_t bytes = 0;
 	while(true) {
-		retval = recv(sock, msg, len, flags);
-		if(retval < 0) {
-			switch(errno) {
-			case ENOMEM:
-				if(logfile >= 0) dprintf(logfile, "LOG: trying again\n");
-				continue;
+		switch(sock.type) {
+		case NORMAL:
+			retval = recv(sock.fd, msg, len, flags);
+			if(retval >= 0) bytes = retval;
+			if(retval < 0) {
+				switch(errno) {
+					case ENOMEM:
+						if(logfile >= 0) dprintf(logfile, "LOG: trying again\n");
+						continue;
+				}
+				return -1;
 			}
-			return -1;
+			break;
+		case SSL_CONN:
+			int (*fn)(SSL*,void*,size_t,size_t*) = (flags & MSG_PEEK) ? SSL_peek_ex : SSL_read_ex;
+			retval = fn(sock.ssl, msg, len, &bytes);
+			if(retval <= 0) {
+				switch(SSL_get_error(sock.ssl, retval)) {
+				case SSL_ERROR_ZERO_RETURN:
+					return 0;
+				case SSL_ERROR_WANT_READ:
+				case SSL_ERROR_WANT_WRITE:
+				case SSL_ERROR_WANT_CONNECT:
+				case SSL_ERROR_WANT_ACCEPT:
+					if(logfile >= 0) dprintf(logfile, "LOG: trying again\n");
+					continue;
+				}
+				return -1;
+			}
+			break;
 		}
-		return retval;
+		return bytes;
 	}
 }
 
 // returns -1 on error or if recv was interrupted, 0 if sock was closed, >0 on success
 // sets *len to the total number of bytes read
 // if logfile >= 0: prints logging information to logfile
-static ssize_t recv_retry(int sock, void *msg, size_t *len, int flags, int logfile) {
+static ssize_t recv_retry(conn_sock sock, void *msg, size_t *len, int flags, int logfile) {
 	size_t read = 0;
 	ssize_t retval;
 	while(read < *len) {
@@ -99,14 +124,28 @@ static ssize_t recv_retry(int sock, void *msg, size_t *len, int flags, int logfi
 }
 
 // returns -1 on error or if recv was interrupted, 0 on success, and 1 if connection was closed
-int recvall(int sock, void *msg, size_t len, int flags, int logfile) {
+int recvall(conn_sock sock, void *msg, size_t len, int flags, int logfile) {
 	ssize_t retval = recv_retry(sock, msg, &len, flags | MSG_WAITALL, logfile);
 	return (retval < 0) ? retval : !retval;
 }
 
 // returns -1 on error or if recv was interrupted, 0 if sock was closed, >0 on success
-ssize_t discard(int sockfd, size_t size, int logfile) {
-	return recv_retry(sockfd, NULL, &size, MSG_TRUNC | MSG_WAITALL, logfile);
+ssize_t discard(int fd, size_t size, int logfile) {
+	return sock_discard((conn_sock){.type = NORMAL, .fd = fd}, size, logfile);
+}
+ssize_t sock_discard(conn_sock sock, size_t size, int logfile) {
+	char *b;
+	switch(sock.type) {
+	case NORMAL:
+		b = NULL;
+		break;
+	case SSL_CONN:
+		{
+			char buf[size];
+			b = buf;
+		}
+	}
+	return recv_retry(sock, b, &size, MSG_TRUNC | MSG_WAITALL, logfile);
 }
 
 // any function where grow(n) > n
@@ -123,7 +162,7 @@ void *reallocfree(void *ptr, size_t size) {
 
 #define BUFSIZE 100
 // returns -1 on error or if recv was interrupted, 0 on success, and 1 if connection was closed
-int recvline(int sock, char **msg, size_t *len, int logfile) {
+int recvline(conn_sock sock, char **msg, size_t *len, int logfile) {
 	if(!*msg) *len = 0;
 	static char buf[BUFSIZE] = {0};
 	ssize_t buf_len = BUFSIZE;
@@ -158,24 +197,43 @@ int recvline(int sock, char **msg, size_t *len, int logfile) {
 	return recvall(sock, *msg + line_len - buf_len, buf_len, 0, logfile);
 }
 
-bool sendall(int sock, const void *msg, size_t len, int flags, int logfile) {
+bool sendall(conn_sock sock, const void *msg, size_t len, int flags, int logfile) {
 	size_t sent = 0;
 	ssize_t retval;
 	while(sent < len) {
 		if(sent > 0 && logfile >= 0) dprintf(logfile, "LOG: sent only %zu of %zu bytes so far, sending the rest\n", sent, len);
-		retval = send(sock, (uint8_t*)msg + sent, len - sent, flags);
-		if(retval < 0) {
-			switch(errno) {
-			case EINTR:
-			case ENOBUFS:
-			case ENOMEM:
-			case ECONNRESET:
-				if(logfile >= 0) dprintf(logfile, "LOG: trying again\n");
-				continue;
+		switch(sock.type) {
+		case NORMAL:
+			retval = send(sock.fd, (uint8_t*)msg + sent, len - sent, flags);
+			if(retval < 0) {
+				switch(errno) {
+				case EINTR:
+				case ENOBUFS:
+				case ENOMEM:
+				case ECONNRESET:
+					if(logfile >= 0) dprintf(logfile, "LOG: trying again\n");
+					continue;
+				}
+				return false;
 			}
-			return false;
+			sent += retval;
+			break;
+		case SSL_CONN:
+			size_t bytes;
+			retval = SSL_write_ex(sock.ssl, (uint8_t*)msg + sent, len - sent, &bytes);
+			if(!retval) {
+				switch(SSL_get_error(sock.ssl, retval)) {
+                                case SSL_ERROR_WANT_READ:
+                                case SSL_ERROR_WANT_WRITE:
+                                case SSL_ERROR_WANT_CONNECT:
+                                case SSL_ERROR_WANT_ACCEPT:
+                                        if(logfile >= 0) dprintf(logfile, "LOG: trying again\n");
+                                        continue;
+				}
+                                return false;
+			}
+			sent += bytes;
 		}
-		sent += retval;
 	}
 	return true;
 }
@@ -267,7 +325,7 @@ char *trim(char *s) {
 }
 
 // returns -2 if headers were invalid, -1 on other errors or if recv was interrupted, 0 if successful, 1 if connection was closed
-int read_headers(int sfd, headers *h, int logfile) {
+int read_headers(conn_sock s, headers *h, int logfile) {
 	char *line = NULL, *i;
 	size_t len;
 	headers hdrs = NULL;
@@ -275,7 +333,7 @@ int read_headers(int sfd, headers *h, int logfile) {
 	int retval;
 	char *header, *value;
 	while(true) {
-		if((retval = recvline(sfd, &line, &len, logfile))) {
+		if((retval = recvline(s, &line, &len, logfile))) {
 			free_headers(hdrs);
 			break;
 		}
@@ -357,7 +415,7 @@ bool add_chunk(chunks *c, size_t size, char *data) {
 }
 
 // returns -1 on error or if recv was interrupted, 0 on success, and 1 if connection was closed
-int read_chunked(int sockfd, char **content, size_t *content_len, bool discard, int logfile) {
+int read_chunked(conn_sock sock, char **content, size_t *content_len, bool discard, int logfile) {
 	int retval;
 	char crlf[2];
 	chunks ch = NULL;
@@ -365,7 +423,7 @@ int read_chunked(int sockfd, char **content, size_t *content_len, bool discard, 
 	size_t len = 0;
 	char *buff = NULL;
 	while(true) {
-		if((retval = recvline(sockfd, &line, &len, logfile))) {
+		if((retval = recvline(sock, &line, &len, logfile))) {
 			free_chunks(ch);
 			free(line);
 			return retval;
@@ -383,7 +441,7 @@ int read_chunked(int sockfd, char **content, size_t *content_len, bool discard, 
 			free(line);
 			return -1;
 		}
-		if((retval = recvall(sockfd, buff, size, 0, logfile))) {
+		if((retval = recvall(sock, buff, size, 0, logfile))) {
 			free_chunks(ch);
 			free(line);
 			free(buff);
@@ -395,14 +453,14 @@ int read_chunked(int sockfd, char **content, size_t *content_len, bool discard, 
 			free(buff);
 			return -1;
 		}
-		if((retval = recvall(sockfd, &crlf, 2, 0, logfile)) || strncmp((char*)&crlf, "\r\n", 2)) {
+		if((retval = recvall(sock, &crlf, 2, 0, logfile)) || strncmp((char*)&crlf, "\r\n", 2)) {
 			free_chunks(ch);
 			free(line);
 			return (retval) ? retval : -1;
 		}
 	}
 	do {
-		if((retval = recvline(sockfd, &line, &len, logfile))) {
+		if((retval = recvline(sock, &line, &len, logfile))) {
 			free_chunks(ch);
 			free(line);
 			return retval;
@@ -433,4 +491,16 @@ int read_chunked(int sockfd, char **content, size_t *content_len, bool discard, 
 	}
 	free_chunks(ch);
 	return 0;
+}
+
+int socket_close(conn_sock sock) {
+	int retval = 1;
+	if(sock.type == SSL_CONN) {
+		while( (retval = SSL_shutdown(sock.ssl)) == 0 ) {}
+		int sfd = SSL_get_fd(sock.ssl);
+		SSL_free(sock.ssl);
+		SSL_CTX_free(sock.ctx);
+		if(sfd >= 0) close(sfd);
+	}
+	return (retval > 0) && close(sock.fd);
 }

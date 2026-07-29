@@ -44,10 +44,14 @@ extern bool child;
 // since POST requests are optional, set hls.post_req_handler to NULL if they're not supported
 // hls.get_req_handler must be set to a valid pointer, since GET requests are required
 // if log is not NULL error messages and other information is output to it, otherwise nothing is output
-// if port is positive it is used as the port to listen on, otherwise the compiled in default is used
 // timeout specifies the timeout for the children created to handle requests
 // set timeout.tv_sec to a negative value to use the compiled in default, setting timeout to 0 means no timeout
+// protocols must be a bitwise or of one or more of the following macros:
+#define HTTP 1
+#define HTTPS 2
+// http_port is the port to listen to http requests on, if -1 a compiled in default is used. (ignored if protocols doesn't include HTTP)
+// https_port is the port to listen to https requests on, if -1 a compiled in default is used. (ignored if protocols doesn't include HTTPS)
 // returns true on successful termination or false on error
-bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int port, struct timeval timeout);
+bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int http_port, int https_port, int protocols, struct timeval timeout);
 
 #endif /* HTTP_SERVER */

@@ -81,7 +81,7 @@ static bool parse_status(char *status_line, status *st, int logfile) {
                 return false;
         }
 	char *sv2 = NULL;
-	if(strcmp(strtok_r(ver, "/", &sv2), "HTTP")) return false;
+	if(strncmp(strtok_r(ver, "/", &sv2), "HTTP", 4)) return false;
 	ver = strtok_r(NULL, "", &sv2);
 	char *sv3 = NULL;
 	v1 = strtok_r(ver, ".", &sv3);
@@ -131,19 +131,48 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		break;
 	}
 
-	freeaddrinfo(servinfo);
-
 	if(p == NULL) {
 		if(logfile >= 0) dprintf(logfile, "Error: could not find hostname: '%s', with protocol: '%s'\n", decoded_name, protocol);
 		free_headers(*h);
 		close(sockfd);
+		freeaddrinfo(servinfo);
 		return false;
+	}
+	bool https = (((struct sockaddr_in*)p->ai_addr)->sin_port == 443);
+	freeaddrinfo(servinfo);
+	conn_sock conn = {0};
+	if(https) {
+		conn.type = SSL_CONN;
+		conn.ctx = SSL_CTX_new(TLS_client_method());
+		if(!conn.ctx) {
+			if(logfile >= 0) dprintf(logfile, "Error: failed to create ssl_ctx\n");
+			free_headers(*h);
+			close(sockfd);
+			return false;
+		}
+		conn.ssl = SSL_new(conn.ctx);
+		if(!conn.ssl) {
+			if(logfile >= 0) dprintf(logfile, "Error: failed to create ssl\n");
+			free_headers(*h);
+			close(sockfd);
+			SSL_CTX_free(conn.ctx);
+			return false;
+		}
+		if(!SSL_set_fd(conn.ssl, sockfd)) {
+			if(logfile >= 0) dprintf(logfile, "Error: \n");
+			free_headers(*h);
+			socket_close(conn);
+			return false;
+		}
+	} else {
+		conn.type = NORMAL;
+		conn.fd = sockfd;
 	}
 	size_t hdrs_len = 1; // length of terminating NULL byte "\0"
 	for(headers tmp = *h; tmp; tmp = tmp->rest) {
 		if(!*tmp->header || !*tmp->value) {
 			free_headers(*h);
-			close(sockfd);
+			socket_close(conn);
 			return false;
 		}
 		hdrs_len += strlen(tmp->header) + strlen(tmp->value) + 4; // length of header + length of value + (length of "\r\n" and ": ")
@@ -151,7 +180,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	char *hdrs = malloc(hdrs_len);
 	if(!hdrs) {
 		free_headers(*h);
-		close(sockfd);
+		socket_close(conn);
 		return false;
 	}
 	char *hdrs_end = hdrs;
@@ -169,15 +198,15 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	char *request;
 	if(asprintf(&request, "GET %s%s%s%s%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n%s\r\n", location, (query)?"?":"", (query)?query:"", (frag)?"#":"", (frag)?frag:"", hostname, hdrs) == -1) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to create request string.\n");
-		close(sockfd);
+		socket_close(conn);
 		free(hdrs);
 		return false;
 	}
 	free(hdrs);
 	size_t len = strlen(request);
-	if(!sendall(sockfd, request, len, 0, logfile)) {
+	if(!sendall(conn, request, len, 0, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to send request.\n");
-		close(sockfd);
+		socket_close(conn);
 		free(request);
 		return false;
 	}
@@ -187,16 +216,16 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 
 	char *statusLine = NULL;
 	size_t stLen = 0;
-	if(recvline(sockfd, &statusLine, &stLen, logfile)) {
+	if(recvline(conn, &statusLine, &stLen, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "recvline: %s", strerror(errno));
-		close(sockfd);
+		socket_close(conn);
 		free(statusLine);
 		return false;
 	}
 
 	if(!parse_status(statusLine, stat, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to parse status: %s\n", statusLine);
-		close(sockfd);
+		socket_close(conn);
 		free(statusLine);
 		return false;
 	}
@@ -206,23 +235,23 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	// have status
 	if(stat->code >= 400) {
 		// error
-		close(sockfd);
+		socket_close(conn);
 		free_status(stat);
 		return true;
 	}
 
-	if(read_headers(sockfd, h, logfile)) {
+	if(read_headers(conn, h, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to read headers.\n");
-		close(sockfd);
+		socket_close(conn);
 		free_status(stat);
 		return false;
 	}
 
 	if(contains_header(*h, "Transfer-Encoding") && strncmp(get_header(*h, "Transfer-Encoding"), "chunked", 7) == 0) {
 		// chunked encoding
-		if(read_chunked(sockfd, (char**)contents, contents_len, false, logfile)) {
+		if(read_chunked(conn, (char**)contents, contents_len, false, logfile)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to read chunked encoding\n");
-			close(sockfd);
+			socket_close(conn);
 			free_status(stat);
 			free_headers(*h);
 			return false;
@@ -231,14 +260,14 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		*contents_len = strtol(get_header(*h, "Content-Length"), NULL, 10);
 		*contents = malloc(*contents_len+1);
 		if(!*contents) {
-			close(sockfd);
+			socket_close(conn);
 			free_status(stat);
 			free_headers(*h);
 			return false;
 		}
-		if(recvall(sockfd, *contents, *contents_len, 0, logfile)) {
+		if(recvall(conn, *contents, *contents_len, 0, logfile)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to read content with length: %ld\n", *contents_len);
-			close(sockfd);
+			socket_close(conn);
 			free_status(stat);
 			free_headers(*h);
 			free(*contents);
@@ -246,7 +275,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		}
 		((uint8_t*)*contents)[*contents_len] = '\0';
 	}
-	close(sockfd);
+	socket_close(conn);
 	return true;
 }
 
