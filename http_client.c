@@ -119,7 +119,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	}
 
 	struct addrinfo *p;
-	int sockfd;
+	int sockfd = -1;
 	for(p = servinfo; p != NULL; p = p->ai_next) {
 		if((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
 			continue;
@@ -134,7 +134,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	if(p == NULL) {
 		if(logfile >= 0) dprintf(logfile, "Error: could not find hostname: '%s', with protocol: '%s'\n", decoded_name, protocol);
 		free_headers(*h);
-		close(sockfd);
+		if(sockfd >= 0) close(sockfd);
 		freeaddrinfo(servinfo);
 		return false;
 	}
@@ -448,7 +448,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		}
 	}
 	free(tmpurl_start);
-	int err;
+	int err = 0;
 	char *tmp_last_protocol = (*protocol) ? strdup(*protocol) : NULL;
 	if(*protocol && !tmp_last_protocol) err = errno;
 	char *tmp_last_hostname = strdup(*hostname);

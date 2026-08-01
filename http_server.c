@@ -117,8 +117,8 @@ static bool sendfileall(conn_sock sock, int in, size_t count, int logfile) {
 		case SSL_CONN:
 			ossl_ssize_t bytes;
 			bytes = SSL_sendfile(sock.ssl, in, o + sent, count - sent, 0);
-			if(!retval) {
-				switch(SSL_get_error(sock.ssl, retval)) {
+			if(bytes < 0) {
+				switch(SSL_get_error(sock.ssl, bytes)) {
                                 case SSL_ERROR_WANT_READ:
                                 case SSL_ERROR_WANT_WRITE:
                                 case SSL_ERROR_WANT_CONNECT:
@@ -293,19 +293,19 @@ static bool match_any(const char *etag, const char *etags, bool (*cmp)(const cha
 static bool done = false;
 static pid_t sp = -1;
 
-static void exit_loop(int _) {
+static void exit_loop([[maybe_unused]] int _) {
 	done = true;
 	if(sp > 0) kill(sp, SIGTERM);
 }
 
 static int logfd = -1;
-static void chld(int sig, siginfo_t *info, void *uc) {
+static void chld([[maybe_unused]] int sig, siginfo_t *info, [[maybe_unused]] void *uc) {
 	if(info->si_code == CLD_EXITED && info->si_status && logfd >= 0) {
 		dprintf(logfd, "ERROR: child (%jd) exited on error with code: %d/n", (intmax_t)info->si_pid, info->si_status);
 	}
 }
 
-static void cleanup(int _) {
+static void cleanup([[maybe_unused]] int _) {
 	close_conn = true;
 }
 
@@ -561,9 +561,11 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to read headers\n");
 					free_request(&req);
 					char *err_resp;
-					if(rhret < -1) {
+					if(rhret == -2) {
 						err_resp = "HTTP/1.1 400 Bad Request\r\n\r\n";
-					} else if(rhret < 0) {
+					} else if(rhret == 1) {
+						err_resp = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n";
+					} else {
 						err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 						retval = false;
 					}
@@ -895,6 +897,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 						free(req_body);
 						break;
 					}
+					[[fallthrough]];
 				default:
 					if(logfile >= 0) dprintf(logfile, "ERROR: Unsupported method\n");
 					char *err_resp = "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\n\r\n";
@@ -1468,7 +1471,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 					if(!sendfileall(conn, content_fd, content_len, logfile)) {
 						if(errno == EINVAL) {
 							ssize_t rv;
-							while((rv = socket_splice(content_fd, NULL, conn, content_len, SPLICE_F_MOVE)) < content_len) {
+							while((rv = socket_splice(content_fd, NULL, conn, content_len, SPLICE_F_MOVE)) < 0 || (size_t)rv < content_len) {
 								if(rv == 0) {
 									close_conn = true;
 									retval = false;
