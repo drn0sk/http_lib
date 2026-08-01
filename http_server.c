@@ -1568,11 +1568,11 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 #endif
 
 bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int http_port, int https_port, int protocols, struct timeval timeout) {
-	static_assert(HTTP_PORT != HTTPS_PORT,
+	_Static_assert(HTTP_PORT != HTTPS_PORT,
 			"HTTP_PORT must not be the same as HTTPS_PORT");
-	static_assert(HTTP_PORT == (uint16_t)HTTP_PORT,
+	_Static_assert(HTTP_PORT == (uint16_t)HTTP_PORT,
 			"HTTP_PORT must fit in a uint16_t");
-	static_assert(HTTPS_PORT == (uint16_t)HTTPS_PORT,
+	_Static_assert(HTTPS_PORT == (uint16_t)HTTPS_PORT,
 			"HTTP_PORTS must fit in a uint16_t");
 	struct sigaction siga = {0};
 	siga.sa_handler = &exit_loop;
