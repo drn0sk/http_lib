@@ -311,17 +311,7 @@ static void cleanup(int _) {
 
 bool child = false;
 
-// default timeout of 1 hour
-// if not specified at compile time
-#ifndef TIMEOUT
-#define TIMEOUT 3600
-#endif
-#ifndef TIMEOUT_USEC
-#define TIMEOUT_USEC 0
-#endif
-
 static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log, uint16_t port, bool https, struct timeval timeout) {
-	if(!hls.get_req_handler) return false;
 	int logfile = -1;
 	if(log) {
 		// open log file
@@ -329,10 +319,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 		if(logfile < 0) return false;
 	}
 	logfd = logfile;
-	if(timeout.tv_sec < 0) {
-		timeout.tv_sec = TIMEOUT;
-		timeout.tv_usec = TIMEOUT_USEC;
-	}
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if(sockfd < 0) {
 		if(logfile >= 0) {
@@ -1558,6 +1544,15 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 	return true;
 }
 
+// default timeout of 1 hour
+// if not specified at compile time
+#ifndef TIMEOUT
+#define TIMEOUT 3600
+#endif
+#ifndef TIMEOUT_USEC
+#define TIMEOUT_USEC 0
+#endif
+
 // default port is 80
 // if not specified at compile time
 #ifndef HTTP_PORT
@@ -1570,6 +1565,12 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 #endif
 
 bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int http_port, int https_port, int protocols, struct timeval timeout) {
+	static_assert(HTTP_PORT != HTTPS_PORT,
+			"HTTP_PORT must not be the same as HTTPS_PORT");
+	static_assert(HTTP_PORT == (uint16_t)HTTP_PORT,
+			"HTTP_PORT must fit in a uint16_t");
+	static_assert(HTTPS_PORT == (uint16_t)HTTPS_PORT,
+			"HTTP_PORTS must fit in a uint16_t");
 	struct sigaction siga = {0};
 	siga.sa_handler = &exit_loop;
 	if(sigaction(SIGINT, &siga, NULL) < 0) return false;
@@ -1579,8 +1580,22 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int ht
 	siga.sa_sigaction = chld;
 	siga.sa_flags = SA_NOCLDWAIT | SA_SIGINFO;
 	if(sigaction(SIGCHLD, &siga, NULL) < 0) return false;
+	// GET requests must be handled while other request types are optional
+	if(!hls.get_req_handler) return false;
 	uint16_t port;
 	bool https;
+	if(http_port < 0) http_port = HTTP_PORT;
+	if(https_port < 0) https_port = HTTPS_PORT;
+	// http_port must not be the same as https_port
+	// unless they are both negative, in which case the defaults are used
+	if(http_port == https_port) return false;
+	// both http_port and https_port must fit in a uint16_t if positive
+	if(http_port != (uint16_t)http_port) return false;
+	if(https_port != (uint16_t)https_port) return false;
+	if(timeout.tv_sec < 0) {
+		timeout.tv_sec = TIMEOUT;
+		timeout.tv_usec = TIMEOUT_USEC;
+	}
 	if(protocols & (HTTP | HTTPS)) {
 		// fork to handle both http and https
 		pid_t tmp = fork();
@@ -1594,14 +1609,13 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int ht
 			https = false;
 		}
 	} else if(protocols & HTTP) {
-		if(http_port < 0) http_port = HTTP_PORT;
 		port = http_port;
 		https = false;
 	} else if(protocols & HTTPS) {
-		if(https_port < 0) https_port = HTTPS_PORT;
 		port = https_port;
 		https = true;
 	} else {
+		// protocol must be at least one of HTTP or HTTPS
 		return false;
 	}
 	return _server(directory, hls, log, port, https, timeout);
