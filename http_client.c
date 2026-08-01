@@ -313,7 +313,6 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 	} else if(last_protocol && *last_protocol) {
 		*protocol = last_protocol;
 	}
-	bool authority_form = false;
 	if(*tmpurl == '/' && *(tmpurl + 1) == '/') {
 		t = strtok_r(tmpurl, "/", &sv);
 		if(!t) {
@@ -458,7 +457,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 	if(*location && !tmp_last_location) err = errno;
 	char *tmp_last_query = (*query) ? strdup(*query) : NULL;
 	if(*query && !tmp_last_query) err = errno;
-	if(*protocol && !tmp_last_protocol || !tmp_last_hostname || *location && !tmp_last_location || *query && !tmp_last_query) {
+	if((*protocol && !tmp_last_protocol) || !tmp_last_hostname || (*location && !tmp_last_location) || (*query && !tmp_last_query)) {
 		errno = err;
 		if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
 		if(*protocol != last_protocol) free(*protocol);
@@ -619,8 +618,8 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 			if(protocol) free(protocol);
 			if(query) free(query);
 			if(fragment) free(fragment);
-			free(url);
 			if(logfile >= 0) dprintf(logfile, "Error: failed to redirect to new location: %s\n", url);
+			free(url);
 			retv = false;
 			break;
 		}
