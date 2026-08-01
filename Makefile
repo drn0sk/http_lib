@@ -4,7 +4,8 @@
 
 RELEASE_CFLAGS = -O3 -flto
 DEBUG_CFLAGS = -ggdb -Og
-ALL_CFLAGS =
+# use gnu23 dialect of c
+ALL_CFLAGS = -std=gnu23
 
 ifdef DEBUG
  ALL_CFLAGS += $(DEBUG_CFLAGS)
@@ -59,13 +60,13 @@ MACROS =	$(if $(HTTP_PORT),-D'HTTP_PORT=$(HTTP_PORT)')\
 
 shared : $(BUILD_DIR)/$(REALNAME)
 $(BUILD_DIR)/$(REALNAME) : $(HEADERS) $(SOURCES) | $(BUILD_DIR)
-	$(CC) -shared -fPIC -Wl,-soname,$(SONAME) $(MACROS) $(CPPFLAGS) $(ALL_CFLAGS) $(LDFLAGS) $(SOURCES) -o $(BUILD_DIR)/$(REALNAME) $(LDLIBS)
+	$(CC) -shared -fPIC -Wl,-soname,$(SONAME) -lssl $(MACROS) $(CPPFLAGS) $(ALL_CFLAGS) $(LDFLAGS) $(SOURCES) -o $(BUILD_DIR)/$(REALNAME) $(LDLIBS)
 
 AR = gcc-ar
 ARFLAGS = rvcs
 static : $(BUILD_DIR)/$(STATICNAME)
 $(BUILD_DIR)/$(STATICNAME) : $(OBJECTS)
-	$(AR) $(ARFLAGS) $(BUILD_DIR)/$(STATICNAME) $(OBJECTS)
+	$(AR) l -lssl $(ARFLAGS) $(BUILD_DIR)/$(STATICNAME) $(OBJECTS)
 
 $(OBJECTS) : httplib.h _httplib_utils.h | $(BUILD_DIR)
 $(OBJECTS) : $(BUILD_DIR)/%.o : %.h
