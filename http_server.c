@@ -1551,7 +1551,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 #endif
 
 static pid_t http_pid = -1, https_pid = -1;
-static void *exit([[maybe_unused]] int _) {
+static void exit_server([[maybe_unused]] int _) {
 	if(http_pid > 0) kill(http_pid, SIGTERM);
 	if(https_pid > 0) kill(https_pid, SIGTERM);
 }
@@ -1581,7 +1581,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int ht
 	}
 	if(!protocols) return false;
 	struct sigaction siga = {0};
-	siga.sa_handler = &exit;
+	siga.sa_handler = &exit_server;
 	if(sigaction(SIGINT, &siga, NULL) < 0) return false;
 	if(sigaction(SIGTERM, &siga, NULL) < 0) return false;
 	if(sigaction(SIGPIPE, &siga, NULL) < 0) return false;
@@ -1617,7 +1617,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int ht
 		port = https_port;
 		https = true;
 	}
-	assert(http_pid < 0 && https_pid < 0);
+	assert(!(http_pid < 0 && https_pid < 0));
 	if(!http_pid || !https_pid) {
 		if(logfd >= 0) close(logfd);
 		return _server(directory, hls, logfd, port, https, timeout);
@@ -1636,23 +1636,17 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int ht
 			}
 		}
 		char *name = "child", *reason = "";
-		switch(info.si_pid) {
-		case http_pid:
-			name = "http server";
-			break;
-		case https_pid:
-			name = "https server";
-			break;
-		}
-		switch(info.code) {
+		if(info.si_pid == http_pid) name = "http server";
+		if(info.si_pid == https_pid) name = "https server";
+		switch(info.si_code) {
 		case CLD_EXITED:
 			reason = " with exit code: ";
-			if(info.status) retval = false;
+			if(info.si_status) retval = false;
 			break;
 		default:
 			reason = " because of signal: ";
 		}
-		if(logfd >= 0) dprintf(logfd, "%s (%jd) exited%s%d\n", name, (intmax_t)info.si_pid, reason, info.status);
+		if(logfd >= 0) dprintf(logfd, "%s (%jd) exited%s%d\n", name, (intmax_t)info.si_pid, reason, info.si_status);
 	}
 	if(logfd >= 0) close(logfd);
 	return retval;
