@@ -1565,7 +1565,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int ht
 			"HTTP_PORTS must fit in a uint16_t");
 	// GET requests must be handled while other request types are optional
 	if(!hls.get_req_handler) return false;
-	uint16_t port;
+	uint16_t port = -1;
 	bool https;
 	if(http_port < 0) http_port = HTTP_PORT;
 	if(https_port < 0) https_port = HTTPS_PORT;
