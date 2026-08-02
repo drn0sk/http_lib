@@ -134,16 +134,10 @@ ssize_t discard(int fd, size_t size, int logfile) {
 	return sock_discard((conn_sock){.type = NORMAL, .fd = fd}, size, logfile);
 }
 ssize_t sock_discard(conn_sock sock, size_t size, int logfile) {
-	char *b;
-	switch(sock.type) {
-	case NORMAL:
-		b = NULL;
-		break;
-	case SSL_CONN:
-		{
+	char *b = NULL;
+	if(sock.type == SSL_CONN) {
 			char buf[size];
 			b = buf;
-		}
 	}
 	return recv_retry(sock, b, &size, MSG_TRUNC | MSG_WAITALL, logfile);
 }
