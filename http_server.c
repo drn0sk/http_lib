@@ -15,6 +15,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <fcntl.h>
+#include <sys/wait.h>
 
 static void free_query(query_list q) {
 	query_list tmp;
@@ -95,19 +96,19 @@ const char *get_cookie(cookies c, char *name) {
 
 static bool close_conn = false;
 
-static bool sendfileall(conn_sock sock, int in, size_t count, int logfile) {
+static bool sendfileall(conn_sock sock, int in, size_t count, int logfd) {
 	size_t sent = 0;
 	ssize_t retval;
 	off_t o = 0;
 	while(sent < count) {
-		if(sent > 0 && logfile >= 0) dprintf(logfile, "LOG: sent only %zu of %zu bytes so far, sending the rest\n", sent, count);
+		if(sent > 0 && logfd >= 0) dprintf(logfd, "LOG: sent only %zu of %zu bytes so far, sending the rest\n", sent, count);
 		switch(sock.type) {
 		case NORMAL:
 			retval = sendfile(sock.fd, in, NULL, count - sent);
 			if(retval < 0) {
 				switch(errno) {
 				case ENOMEM:
-					if(logfile >= 0) dprintf(logfile, "LOG: trying again\n");
+					if(logfd >= 0) dprintf(logfd, "LOG: trying again\n");
 					continue;
 				}
 				return false;
@@ -123,7 +124,7 @@ static bool sendfileall(conn_sock sock, int in, size_t count, int logfile) {
                                 case SSL_ERROR_WANT_WRITE:
                                 case SSL_ERROR_WANT_CONNECT:
                                 case SSL_ERROR_WANT_ACCEPT:
-                                        if(logfile >= 0) dprintf(logfile, "LOG: trying again\n");
+                                        if(logfd >= 0) dprintf(logfd, "LOG: trying again\n");
                                         continue;
 				}
                                 return false;
@@ -134,14 +135,14 @@ static bool sendfileall(conn_sock sock, int in, size_t count, int logfile) {
 	return true;
 }
 
-static bool sendheaders(conn_sock sock, headers h, int flags, int logfile) {
+static bool sendheaders(conn_sock sock, headers h, int flags, int logfd) {
 	for(;h;h=h->rest) {
-		if(!sendall(sock, h->header, strlen(h->header), flags | MSG_MORE, logfile)) return false;
-		if(!sendall(sock, ": ", 2, flags | MSG_MORE, logfile)) return false;
-		if(!sendall(sock, h->value, strlen(h->value), flags | MSG_MORE, logfile)) return false;
-		if(!sendall(sock, "\r\n", 2, flags | MSG_MORE, logfile)) return false;
+		if(!sendall(sock, h->header, strlen(h->header), flags | MSG_MORE, logfd)) return false;
+		if(!sendall(sock, ": ", 2, flags | MSG_MORE, logfd)) return false;
+		if(!sendall(sock, h->value, strlen(h->value), flags | MSG_MORE, logfd)) return false;
+		if(!sendall(sock, "\r\n", 2, flags | MSG_MORE, logfd)) return false;
 	}
-	if(!sendall(sock, "\r\n", 2, flags, logfile)) return false;
+	if(!sendall(sock, "\r\n", 2, flags, logfd)) return false;
 	return true;
 }
 
@@ -185,7 +186,7 @@ static void free_request(request *re) {
 	re->target = NULL;
 }
 
-static bool parse_request(char *request_line, request *re, int logfile) {
+static bool parse_request(char *request_line, request *re, int logfd) {
 	char *sv = NULL;
 	char *meth, *target, *ver, *v1, *v2;
 	meth = strtok_r(request_line, " ", &sv);
@@ -198,7 +199,7 @@ static bool parse_request(char *request_line, request *re, int logfile) {
 	char *name = strtok_r(ver, "/", &sv);
 	name = (name) ? name : '\0';
 	if(!(!strcmp(name, "HTTP") || !strcmp(name, "HTTPS"))) {
-		if(logfile >= 0) dprintf(logfile, "ERROR: Unkown http version name: %s\n", name);
+		if(logfd >= 0) dprintf(logfd, "ERROR: Unkown http version name: %s\n", name);
 		return false;
 	}
 	ver = strtok_r(NULL, "", &sv);
@@ -291,17 +292,15 @@ static bool match_any(const char *etag, const char *etags, bool (*cmp)(const cha
 #define weak_match_any(e, es) match_any(e, es, weak_match)
 
 static bool done = false;
-static pid_t sp = -1;
 
 static void exit_loop([[maybe_unused]] int _) {
 	done = true;
-	if(sp > 0) kill(sp, SIGTERM);
 }
 
 static int logfd = -1;
 static void chld([[maybe_unused]] int sig, siginfo_t *info, [[maybe_unused]] void *uc) {
 	if(info->si_code == CLD_EXITED && info->si_status && logfd >= 0) {
-		dprintf(logfd, "ERROR: child (%jd) exited on error with code: %d/n", (intmax_t)info->si_pid, info->si_status);
+		dprintf(logfd, "ERROR: child (%jd) exited on error with code: %d\n", (intmax_t)info->si_pid, info->si_status);
 	}
 }
 
@@ -311,18 +310,20 @@ static void cleanup([[maybe_unused]] int _) {
 
 bool child = false;
 
-static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log, uint16_t port, bool https, struct timeval timeout) {
-	int logfile = -1;
-	if(log) {
-		// open log file
-		logfile = open(log, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
-		if(logfile < 0) return false;
-	}
-	logfd = logfile;
+static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfile, uint16_t port, bool https, struct timeval timeout) {
+	struct sigaction siga = {0};
+	siga.sa_handler = &exit_loop;
+	if(sigaction(SIGINT, &siga, NULL) < 0) return false;
+	if(sigaction(SIGTERM, &siga, NULL) < 0) return false;
+	if(sigaction(SIGPIPE, &siga, NULL) < 0) return false;
+	memset(&siga, 0, sizeof(struct sigaction));
+	siga.sa_sigaction = chld;
+	siga.sa_flags = SA_NOCLDWAIT | SA_NOCLDSTOP | SA_SIGINFO;
+	if(sigaction(SIGCHLD, &siga, NULL) < 0) return false;
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if(sockfd < 0) {
 		if(logfile >= 0) {
-			dprintf(logfile, "ERROR: socket: %s", strerror(errno));
+			dprintf(logfile, "ERROR: socket: %s\n", strerror(errno));
 			close(logfile);
 		}
 		return false;
@@ -333,7 +334,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 	sad.sin_addr.s_addr = htonl(INADDR_ANY);
 	if(bind(sockfd, (struct sockaddr*)&sad, (socklen_t)sizeof(sad)) < 0) {
 		if(logfile >= 0) {
-			dprintf(logfile, "ERROR: bind: %s", strerror(errno));
+			dprintf(logfile, "ERROR: bind: %s\n", strerror(errno));
 			close(logfile);
 		}
 		close(sockfd);
@@ -341,7 +342,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 	}
 	if(listen(sockfd, 0) < 0) {
 		if(logfile >= 0) {
-			dprintf(logfile, "ERROR: listen: %s", strerror(errno));
+			dprintf(logfile, "ERROR: listen: %s\n", strerror(errno));
 			close(logfile);
 		}
 		close(sockfd);
@@ -368,7 +369,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 		int connfd = accept(sockfd, (struct sockaddr*)&cad, &cad_len);
 		if(done) break;
 		if(connfd < 0) {
-			if(errno != EINTR && logfile >= 0) dprintf(logfile, "ERROR: accept: %s", strerror(errno));
+			if(errno != EINTR && logfile >= 0) dprintf(logfile, "ERROR: accept: %s\n", strerror(errno));
 			continue;
 		}
 		if(logfile >= 0) dprintf(logfile, "LOG: Accepted a connection\n");
@@ -407,7 +408,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 		}
 		p = fork();
 		if(p < 0) {
-			if(logfile >= 0) dprintf(logfile, "ERROR: fork: %s", strerror(errno));
+			if(logfile >= 0) dprintf(logfile, "ERROR: fork: %s\n", strerror(errno));
 			char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 			sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 			socket_close(conn);
@@ -1383,7 +1384,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 						reason = "Partial Content";
 					}
 					if(asprintf(&range, "bytes %jd-%jd/%zu", start, end, content_len) < 0) {
-						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to create range header");
+						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to create range header\n");
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
@@ -1394,7 +1395,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 						break;
 					}
 					if(!update_header(&hdrs, strdup("Content-Range"), range)) {
-						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to create range header");
+						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to create range header\n");
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
 						free(range);
@@ -1539,11 +1540,14 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 	if(p > 0) kill(p, SIGTERM);
 	kill_pidlist(ps, SIGTERM);
 	free_pidlist(ps);
-	if(logfile >= 0) close(logfile);
 	if(close(sockfd) < 0) {
-		if(logfile >= 0) dprintf(logfile, "ERROR: close: %s", strerror(errno));
+		if(logfile >= 0) {
+			dprintf(logfile, "ERROR: close: %s\n", strerror(errno));
+			close(logfile);
+		}
 		return false;
 	}
+	if(logfile >= 0) close(logfile);
 	return true;
 }
 
@@ -1567,6 +1571,12 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, char *log
 #define HTTPS_PORT 443
 #endif
 
+static pid_t http_pid = -1, https_pid = -1;
+static void *exit([[maybe_unused]] int _) {
+	if(http_pid > 0) kill(http_pid, SIGTERM);
+	if(https_pid > 0) kill(https_pid, SIGTERM);
+}
+
 bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int http_port, int https_port, int protocols, struct timeval timeout) {
 	_Static_assert(HTTP_PORT != HTTPS_PORT,
 			"HTTP_PORT must not be the same as HTTPS_PORT");
@@ -1574,15 +1584,6 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int ht
 			"HTTP_PORT must fit in a uint16_t");
 	_Static_assert(HTTPS_PORT == (uint16_t)HTTPS_PORT,
 			"HTTP_PORTS must fit in a uint16_t");
-	struct sigaction siga = {0};
-	siga.sa_handler = &exit_loop;
-	if(sigaction(SIGINT, &siga, NULL) < 0) return false;
-	if(sigaction(SIGTERM, &siga, NULL) < 0) return false;
-	if(sigaction(SIGPIPE, &siga, NULL) < 0) return false;
-	memset(&siga, 0, sizeof(struct sigaction));
-	siga.sa_sigaction = chld;
-	siga.sa_flags = SA_NOCLDWAIT | SA_SIGINFO;
-	if(sigaction(SIGCHLD, &siga, NULL) < 0) return false;
 	// GET requests must be handled while other request types are optional
 	if(!hls.get_req_handler) return false;
 	uint16_t port;
@@ -1599,28 +1600,82 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int ht
 		timeout.tv_sec = TIMEOUT;
 		timeout.tv_usec = TIMEOUT_USEC;
 	}
-	if(protocols & (HTTP | HTTPS)) {
-		// fork to handle both http and https
-		pid_t tmp = fork();
-		if(tmp < 0) return false;
-		if(tmp) {
-			sp = tmp;
-			port = https_port;
-			https = true;
-		} else {
-			port = http_port;
-			https = false;
+	if(!protocols) return false;
+	struct sigaction siga = {0};
+	siga.sa_handler = &exit;
+	if(sigaction(SIGINT, &siga, NULL) < 0) return false;
+	if(sigaction(SIGTERM, &siga, NULL) < 0) return false;
+	if(sigaction(SIGPIPE, &siga, NULL) < 0) return false;
+	if(log) {
+		// open log file
+		logfd = open(log, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+		if(logfd < 0) return false;
+	}
+	// fork child(ren) to handle http(s) connections
+	// parent will wait for children and kill both if either one exits
+	if(protocols & HTTP) {
+		http_pid = fork();
+		if(http_pid < 0) {
+			if(logfd >= 0) {
+				dprintf(logfd, "ERROR: fork: %s\n", strerror(errno));
+				close(logfd);
+			}
+			return false;
 		}
-	} else if(protocols & HTTP) {
 		port = http_port;
 		https = false;
-	} else if(protocols & HTTPS) {
+	}
+	if(http_pid && (protocols & HTTPS)) {
+		https_pid = fork();
+		if(https_pid < 0) {
+			if(logfd >= 0) {
+				dprintf(logfd, "ERROR: fork: %s\n", strerror(errno));
+				close(logfd);
+			}
+			if(http_pid > 0) kill(http_pid, SIGTERM);
+			return false;
+		}
 		port = https_port;
 		https = true;
-	} else {
-		// protocol must be at least one of HTTP or HTTPS
-		return false;
 	}
-	return _server(directory, hls, log, port, https, timeout);
+	assert(http_pid < 0 && https_pid < 0);
+	if(!http_pid || !https_pid) {
+		if(logfd >= 0) close(logfd);
+		return _server(directory, hls, logfd, port, https, timeout);
+	}
 	// wait for _server instances, killing them if any signal is recieved
+	errno = 0;
+	bool retval = true;
+	while(true) {
+		siginfo_t info = {0};
+		int rv = waitid(P_ALL, 0, &info, WEXITED);
+		if(rv < 0) {
+			if(errno == ECHILD) {
+				close(logfd);
+				break;
+			} else {
+				continue;
+			}
+		}
+		char *name = "child", *reason = "";
+		switch(info.si_pid) {
+		case http_pid:
+			name = "http server";
+			break;
+		case https_pid:
+			name = "https server";
+			break;
+		}
+		switch(info.code) {
+		case CLD_EXITED:
+			reason = " with exit code: ";
+			if(info.status) retval = false;
+			break;
+		default:
+			reason = " because of signal: ";
+		}
+		if(logfd >= 0) dprintf(logfd, "%s (%jd) exited%s%d\n", name, (intmax_t)info.si_pid, reason, info.status);
+	}
+	if(logfd >= 0) close(logfd);
+	return retval;
 }

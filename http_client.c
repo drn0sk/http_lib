@@ -77,7 +77,7 @@ static bool parse_status(char *status_line, status *st, int logfile) {
 	reason = strtok_r(NULL, "\r\n", &sv);
 	char *rest;
 	if((rest = strtok_r(NULL, "\n", &sv)) && *rest) {
-                if(logfile >= 0) dprintf(logfile, "Error: unable to parse status line.\n\tversion: '%s'\n\tstatus code: '%s'\n\treason phrase: '%s'\n\t extra: '%s'", ver, codestr, reason, rest);
+                if(logfile >= 0) dprintf(logfile, "Error: unable to parse status line.\n\tversion: '%s'\n\tstatus code: '%s'\n\treason phrase: '%s'\n\t extra: '%s'\n", ver, codestr, reason, rest);
                 return false;
         }
 	char *sv2 = NULL;
@@ -217,7 +217,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	char *statusLine = NULL;
 	size_t stLen = 0;
 	if(recvline(conn, &statusLine, &stLen, logfile)) {
-		if(logfile >= 0) dprintf(logfile, "recvline: %s", strerror(errno));
+		if(logfile >= 0) dprintf(logfile, "recvline: %s\n", strerror(errno));
 		socket_close(conn);
 		free(statusLine);
 		return false;
@@ -306,7 +306,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		tmpurl = tmp + 1;
 		*protocol = strdup(t);
 		if(!*protocol) {
-			if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
+			if(logfile >= 0) dprintf(logfile, "strdup: %s\n", strerror(errno));
 			free(tmpurl_start);
 			return false;
 		}
@@ -324,7 +324,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		}
 		*hostname = strdup(t);
 		if(!*hostname) {
-			if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
+			if(logfile >= 0) dprintf(logfile, "strdup: %s\n", strerror(errno));
 			free(tmpurl_start);
 			if(*protocol != last_protocol) free(*protocol);
 			*protocol = NULL;
@@ -354,7 +354,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		if(*t == '/') {
 			*location = strdup(t);
 			if(!*location) {
-				if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
+				if(logfile >= 0) dprintf(logfile, "strdup: %s\n", strerror(errno));
 				if(*protocol != last_protocol) free(*protocol);
 				*protocol = NULL;
 				if(*hostname != last_hostname) free(*hostname);
@@ -366,7 +366,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		} else {
 			char *tmp_location = (char*)malloc(strlen(t)+2);
 			if(!tmp_location) {
-				if(logfile >= 0) dprintf(logfile, "malloc: %s", strerror(errno));
+				if(logfile >= 0) dprintf(logfile, "malloc: %s\n", strerror(errno));
 				if(*protocol != last_protocol) free(*protocol);
 				*protocol = NULL;
 				if(*hostname != last_hostname) free(*hostname);
@@ -391,7 +391,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 				*strrchr(last_location, '/') = '\0';
 				*location = malloc(strlen(last_location) + strlen(tmp_location) + 1);
 				if(!*location) {
-					if(logfile >= 0) dprintf(logfile, "malloc: %s", strerror(errno));
+					if(logfile >= 0) dprintf(logfile, "malloc: %s\n", strerror(errno));
 					if(*protocol != last_protocol) free(*protocol);
 					*protocol = NULL;
 					if(*hostname != last_hostname) free(*hostname);
@@ -419,7 +419,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		t = strtok_r(NULL, "#", &sv);
 		*query = strdup(t);
 		if(!*query) {
-			if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
+			if(logfile >= 0) dprintf(logfile, "strdup: %s\n", strerror(errno));
 			free(tmpurl_start);
 			if(*protocol != last_protocol) free(*protocol);
 			*protocol = NULL;
@@ -434,7 +434,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 		t = strtok_r(NULL, "", &sv);
 		*fragment = strdup(t);
 		if(!*fragment) {
-			if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
+			if(logfile >= 0) dprintf(logfile, "strdup: %s\n", strerror(errno));
 			free(tmpurl_start);
 			if(*protocol != last_protocol) free(*protocol);
 			*protocol = NULL;
@@ -459,7 +459,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 	if(*query && !tmp_last_query) err = errno;
 	if((*protocol && !tmp_last_protocol) || !tmp_last_hostname || (*location && !tmp_last_location) || (*query && !tmp_last_query)) {
 		errno = err;
-		if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
+		if(logfile >= 0) dprintf(logfile, "strdup: %s\n", strerror(errno));
 		if(*protocol != last_protocol) free(*protocol);
 		*protocol = NULL;
 		if(*hostname != last_hostname) free(*hostname);
@@ -553,7 +553,7 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 	url_list l = NULL;
 	url = strdup(url);
 	if(!url) {
-		if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
+		if(logfile >= 0) dprintf(logfile, "strdup: %s\n", strerror(errno));
 		if(logfile >= 0) close(logfile);
 		free(last_protocol);
 		free(last_hostname);
@@ -582,7 +582,7 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 		if(!tmp) break;
 		url = strdup(tmp);
 		if(!url) {
-			if(logfile >= 0) dprintf(logfile, "strdup: %s", strerror(errno));
+			if(logfile >= 0) dprintf(logfile, "strdup: %s\n", strerror(errno));
 			retv = false;
 			break;
 		}
