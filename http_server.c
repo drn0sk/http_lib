@@ -16,6 +16,7 @@
 #include <sys/time.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <assert.h>
 
 static void free_query(query_list q) {
 	query_list tmp;
