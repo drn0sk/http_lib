@@ -323,10 +323,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 	if(sigaction(SIGCHLD, &siga, NULL) < 0) return false;
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if(sockfd < 0) {
-		if(logfile >= 0) {
-			dprintf(logfile, "ERROR: socket: %s\n", strerror(errno));
-			close(logfile);
-		}
+		if(logfile >= 0) dprintf(logfile, "ERROR: socket: %s\n", strerror(errno));
 		return false;
 	}
 	struct sockaddr_in sad = {0};
@@ -334,18 +331,12 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 	sad.sin_port = htons(port);
 	sad.sin_addr.s_addr = htonl(INADDR_ANY);
 	if(bind(sockfd, (struct sockaddr*)&sad, (socklen_t)sizeof(sad)) < 0) {
-		if(logfile >= 0) {
-			dprintf(logfile, "ERROR: bind: %s\n", strerror(errno));
-			close(logfile);
-		}
+		if(logfile >= 0) dprintf(logfile, "ERROR: bind: %s\n", strerror(errno));
 		close(sockfd);
 		return false;
 	}
 	if(listen(sockfd, 0) < 0) {
-		if(logfile >= 0) {
-			dprintf(logfile, "ERROR: listen: %s\n", strerror(errno));
-			close(logfile);
-		}
+		if(logfile >= 0) dprintf(logfile, "ERROR: listen: %s\n", strerror(errno));
 		close(sockfd);
 		return false;
 	}
@@ -356,10 +347,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 		conn.type = SSL_CONN;
 		conn.ctx = SSL_CTX_new(TLS_server_method());
 		if(!conn.ctx) {
-			if(logfile >= 0) {
-				dprintf(logfile, "ERROR: failed to create ssl_ctx\n");
-				close(logfile);
-			}
+			if(logfile >= 0) dprintf(logfile, "ERROR: failed to create ssl_ctx\n");
 			close(sockfd);
 			return false;
 		}
@@ -425,7 +413,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 				socket_close(conn);
-				if(logfile >= 0) close(logfile);
 				return false;
 			}
 			if(sigaction(SIGTERM, &siga, NULL) < 0) {
@@ -433,7 +420,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 				socket_close(conn);
-				if(logfile >= 0) close(logfile);
 				return false;
 			}
 			if(sigaction(SIGPIPE, &siga, NULL) < 0) {
@@ -441,7 +427,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 				socket_close(conn);
-				if(logfile >= 0) close(logfile);
 				return false;
 			}
 			siga.sa_handler = SIG_IGN;
@@ -451,7 +436,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 				socket_close(conn);
-				if(logfile >= 0) close(logfile);
 				return false;
 			}
 			// get current BOOTTIME time
@@ -461,7 +445,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 				socket_close(conn);
-				if(logfile >= 0) close(logfile);
 				return false;
 			}
 			struct timeval start, current, tmp2;
@@ -1526,7 +1509,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				free_headers(h);
 			}
 			socket_close(conn);
-			if(logfile >= 0) close(logfile);
 			return retval;
 		} else {
 			socket_close(conn);
@@ -1542,13 +1524,9 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 	kill_pidlist(ps, SIGTERM);
 	free_pidlist(ps);
 	if(close(sockfd) < 0) {
-		if(logfile >= 0) {
-			dprintf(logfile, "ERROR: close: %s\n", strerror(errno));
-			close(logfile);
-		}
+		if(logfile >= 0) dprintf(logfile, "ERROR: close: %s\n", strerror(errno));
 		return false;
 	}
-	if(logfile >= 0) close(logfile);
 	return true;
 }
 
@@ -1645,7 +1623,6 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int ht
 		return _server(directory, hls, logfd, port, https, timeout);
 	}
 	// wait for _server instances, killing them if any signal is recieved
-	errno = 0;
 	bool retval = true;
 	while(true) {
 		siginfo_t info = {0};
