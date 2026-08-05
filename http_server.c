@@ -311,7 +311,7 @@ static void cleanup([[maybe_unused]] int _) {
 
 bool child = false;
 
-static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfile, uint16_t port, bool https, struct timeval timeout) {
+static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfile, uint16_t port, bool https, char *certificate_chain_file, char *private_key_file, struct timeval timeout) {
 	struct sigaction siga = {0};
 	siga.sa_handler = &exit_loop;
 	if(sigaction(SIGINT, &siga, NULL) < 0) return false;
@@ -350,8 +350,35 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 		if(!conn.ctx) {
 			if(logfile >= 0) dprintf(logfile, "ERROR: failed to create ssl_ctx\n");
 			close(sockfd);
+			print_ssl_errors(logfile);
 			return false;
 		}
+		if(!SSL_CTX_set_min_proto_version(conn.ctx, TLS1_2_VERSION)) {
+			if(logfile >= 0) dprintf(logfile, "ERROR: failed to set min tls version\n");
+			close(sockfd);
+			SSL_ctx_free(conn.ctx);
+			print_ssl_errors(logfile);
+			return false;
+		}
+		uint64_t opts = SSL_OP_IGNORE_UNEXPECTED_EOF |
+			SSL_OP_NO_RENEGOTIATION |
+			SSL_OP_CIPHER_SERVER_PREFERENCE;
+		SSL_CTX_set_options(conn.ctx, opts);
+		if (SSL_CTX_use_certificate_chain_file(conn.ctx, certificate_chain_file) <= 0) {
+			if(logfile >= 0) dprintf(logfile, "ERROR: failed to set certificate chain file\n");
+			close(sockfd);
+			SSL_ctx_free(conn.ctx);
+			print_ssl_errors(logfile);
+			return false;
+		}
+		if (SSL_CTX_use_PrivateKey_file(conn.ctx, PKEY_FILE, private_key_file) <= 0) {
+			if(logfile >= 0) dprintf(logfile, "ERROR: failed to set private key file\n");
+			close(sockfd);
+			SSL_ctx_free(conn.ctx);
+			print_ssl_errors(logfile);
+			return false;
+		}
+		SSL_CTX_set_verify(conn.ctx, SSL_VERIFY_NONE, NULL);
 	}
 	while(!done) {
 		struct sockaddr_in cad = {0};
@@ -383,18 +410,19 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				close(connfd);
 				connfd = -1;
 				SSL_CTX_free(conn.ctx);
+				print_ssl_errors(logfile);
 				continue;
 			}
 			if(!SSL_set_fd(conn.ssl, connfd)) {
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed create ssl_ctx\n");
 				close(connfd);
 				connfd = -1;
-				socket_close(conn);
+				socket_close(conn, logfile);
 				continue;
 			}
 			if(SSL_accept(conn.ssl) <= 0) {
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed ssl handshake\n");
-				socket_close(conn);
+				socket_close(conn, logfile);
 				continue;
 			}
 		} else {
@@ -406,7 +434,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 			if(logfile >= 0) dprintf(logfile, "ERROR: fork: %s\n", strerror(errno));
 			char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 			sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
-			socket_close(conn);
+			socket_close(conn, logfile);
 			break;
 		}
 		if(!p) {
@@ -418,14 +446,14 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
-				socket_close(conn);
+				socket_close(conn, logfile);
 				return false;
 			}
 			if(sigaction(SIGTERM, &siga, NULL) < 0) {
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
-				socket_close(conn);
+				socket_close(conn, logfile);
 				return false;
 			}
 			siga.sa_handler = SIG_IGN;
@@ -433,7 +461,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
-				socket_close(conn);
+				socket_close(conn, logfile);
 				return false;
 			}
 			siga.sa_flags = SA_NOCLDWAIT;
@@ -441,7 +469,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
-				socket_close(conn);
+				socket_close(conn, logfile);
 				return false;
 			}
 			// get current BOOTTIME time
@@ -450,7 +478,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to get time\n");
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
-				socket_close(conn);
+				socket_close(conn, logfile);
 				return false;
 			}
 			struct timeval start, current, tmp2;
@@ -1514,10 +1542,10 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				free_request(&req);
 				free_headers(h);
 			}
-			socket_close(conn);
+			socket_close(conn, logfile);
 			return retval;
 		} else {
-			socket_close(conn);
+			socket_close(conn, logfile);
 			if(!add_pid(&ps, p)) {
 				if(logfile >= 0) dprintf(logfile, "Could not add pid\n");
 				done = true;
@@ -1556,13 +1584,21 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 #define HTTPS_PORT 443
 #endif
 
+#ifndef CERT_CHAIN_FILE
+#define CERT_CHAIN_FILE "chain.pem"
+#endif
+
+#ifndef PKEY_FILE
+#define PKEY_FILE "pkey.pem"
+#endif
+
 static pid_t http_pid = -1, https_pid = -1;
 static void exit_server([[maybe_unused]] int _) {
 	if(http_pid > 0) kill(http_pid, SIGTERM);
 	if(https_pid > 0) kill(https_pid, SIGTERM);
 }
 
-bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int http_port, int https_port, int protocols, struct timeval timeout) {
+bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int http_port, int https_port, int protocols, char *certificate_chain_file, char *private_key_file, struct timeval timeout) {
 	_Static_assert(HTTP_PORT != HTTPS_PORT,
 			"HTTP_PORT must not be the same as HTTPS_PORT");
 	_Static_assert(HTTP_PORT == (uint16_t)HTTP_PORT,
@@ -1625,9 +1661,11 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int ht
 		https = true;
 	}
 	assert(!(http_pid < 0 && https_pid < 0));
+	if(!certificate_chain_file) certificate_chain_file = CERT_CHAIN_FILE;
+	if(!private_key_file) private_key_file = PKEY_FILE;
 	if(!http_pid || !https_pid) {
 		if(logfd >= 0) close(logfd);
-		return _server(directory, hls, logfd, port, https, timeout);
+		return _server(directory, hls, logfd, port, https, certificate_chain_file, private_key_file, timeout);
 	}
 	// wait for _server instances, killing them if any signal is recieved
 	bool retval = true;

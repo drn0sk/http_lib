@@ -28,7 +28,8 @@ size_t grow(size_t old_len);
 // realloc but frees ptr on error
 void *reallocfree(void *ptr, size_t size);
 
-int socket_close(conn_sock sock);
+void print_ssl_errors(int logfile);
+bool socket_close(conn_sock sock, int logfile);
 bool sendall(conn_sock sock, const void* msg, size_t len, int flags, int logfile);
 // returns -1 on error or if recv was interrupted, 0 on success, and 1 if connection was closed
 int recvall(conn_sock sock, void *msg, size_t len, int flags, int logfile);

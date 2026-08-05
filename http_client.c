@@ -162,13 +162,13 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 			if(logfile >= 0) dprintf(logfile, "Error: \n");
 			free_headers(*h);
 			close(sockfd);
-			socket_close(conn);
+			socket_close(conn, logfile);
 			return false;
 		}
 		if(SSL_connect(conn.ssl) <= 0) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to connect\n");
 			free_headers(*h);
-			socket_close(conn);
+			socket_close(conn, logfile);
 			return false;
 		}
 	} else {
@@ -179,7 +179,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	for(headers tmp = *h; tmp; tmp = tmp->rest) {
 		if(!*tmp->header || !*tmp->value) {
 			free_headers(*h);
-			socket_close(conn);
+			socket_close(conn, logfile);
 			return false;
 		}
 		hdrs_len += strlen(tmp->header) + strlen(tmp->value) + 4; // length of header + length of value + (length of "\r\n" and ": ")
@@ -187,7 +187,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	char *hdrs = malloc(hdrs_len);
 	if(!hdrs) {
 		free_headers(*h);
-		socket_close(conn);
+		socket_close(conn, logfile);
 		return false;
 	}
 	char *hdrs_end = hdrs;
@@ -205,7 +205,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	char *request;
 	if(asprintf(&request, "GET %s%s%s%s%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n%s\r\n", location, (query)?"?":"", (query)?query:"", (frag)?"#":"", (frag)?frag:"", hostname, hdrs) == -1) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to create request string.\n");
-		socket_close(conn);
+		socket_close(conn, logfile);
 		free(hdrs);
 		return false;
 	}
@@ -213,7 +213,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	size_t len = strlen(request);
 	if(!sendall(conn, request, len, 0, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to send request.\n");
-		socket_close(conn);
+		socket_close(conn, logfile);
 		free(request);
 		return false;
 	}
@@ -225,14 +225,14 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	size_t stLen = 0;
 	if(recvline(conn, &statusLine, &stLen, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "recvline: %s\n", strerror(errno));
-		socket_close(conn);
+		socket_close(conn, logfile);
 		free(statusLine);
 		return false;
 	}
 
 	if(!parse_status(statusLine, stat, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to parse status: %s\n", statusLine);
-		socket_close(conn);
+		socket_close(conn, logfile);
 		free(statusLine);
 		return false;
 	}
@@ -242,14 +242,14 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	// have status
 	if(stat->code >= 400) {
 		// error
-		socket_close(conn);
+		socket_close(conn, logfile);
 		free_status(stat);
 		return true;
 	}
 
 	if(read_headers(conn, h, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to read headers.\n");
-		socket_close(conn);
+		socket_close(conn, logfile);
 		free_status(stat);
 		return false;
 	}
@@ -258,7 +258,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		// chunked encoding
 		if(read_chunked(conn, (char**)contents, contents_len, false, logfile)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to read chunked encoding\n");
-			socket_close(conn);
+			socket_close(conn, logfile);
 			free_status(stat);
 			free_headers(*h);
 			return false;
@@ -267,14 +267,14 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		*contents_len = strtol(get_header(*h, "Content-Length"), NULL, 10);
 		*contents = malloc(*contents_len+1);
 		if(!*contents) {
-			socket_close(conn);
+			socket_close(conn, logfile);
 			free_status(stat);
 			free_headers(*h);
 			return false;
 		}
 		if(recvall(conn, *contents, *contents_len, 0, logfile)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to read content with length: %ld\n", *contents_len);
-			socket_close(conn);
+			socket_close(conn, logfile);
 			free_status(stat);
 			free_headers(*h);
 			free(*contents);
@@ -282,7 +282,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		}
 		((uint8_t*)*contents)[*contents_len] = '\0';
 	}
-	socket_close(conn);
+	socket_close(conn, logfile);
 	return true;
 }
 

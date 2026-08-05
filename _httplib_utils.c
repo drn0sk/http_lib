@@ -487,14 +487,30 @@ int read_chunked(conn_sock sock, char **content, size_t *content_len, bool disca
 	return 0;
 }
 
-int socket_close(conn_sock sock) {
-	int retval = 1;
+static int print_ssl_errors_callback(const char *str, size_t len, void *u) {
+	return ((dprintf(*(int*)u, "SSL ERROR: ") < 11) &&
+			(write(*(int*)u, str, len) < len)) ? -1 : 0;
+}
+void print_ssl_errors(int logfile) {
+	return ERR_print_errors_cb(print_ssl_errors_callback, (void*)&logfile);
+}
+
+bool socket_close(conn_sock sock, int logfile) {
+	bool retval = false;
 	if(sock.type == SSL_CONN) {
-		while( (retval = SSL_shutdown(sock.ssl)) == 0 ) {}
+		int tmp1 = 0;
+		while( (tmp1 = SSL_shutdown(sock.ssl)) == 0 ) {}
 		int sfd = SSL_get_fd(sock.ssl);
 		SSL_free(sock.ssl);
 		SSL_CTX_free(sock.ctx);
-		if(sfd >= 0) close(sfd);
+		print_ssl_errors(logfile);
+		int tmp2 = 0;
+		if(sfd >= 0) tmp2 = close(sfd);
+		if(tmp1 < 0) dprintf(logfile, "ERROR: %s\n", strerror(errno));
+		retval = (tmp1 == 1) && !tmp2;
+	} else if(sock.type == NORMAL) {
+		retval = (!close(sock.fd)) ? true : false;
+		if(!retval) dprintf(logfile, "ERROR: %s\n", strerror(errno));
 	}
-	return (retval > 0) && close(sock.fd);
+	return retval;
 }
