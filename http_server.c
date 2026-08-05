@@ -392,6 +392,11 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				socket_close(conn);
 				continue;
 			}
+			if(SSL_accept(conn.ssl) <= 0) {
+				if(logfile >= 0) dprintf(logfile, "ERROR: failed ssl handshake\n");
+				socket_close(conn);
+				continue;
+			}
 		} else {
 			conn.type = NORMAL;
 			conn.fd = connfd;

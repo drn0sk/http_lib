@@ -161,6 +161,13 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		if(!SSL_set_fd(conn.ssl, sockfd)) {
 			if(logfile >= 0) dprintf(logfile, "Error: \n");
 			free_headers(*h);
+			close(sockfd);
+			socket_close(conn);
+			return false;
+		}
+		if(SSL_connect(conn.ssl) <= 0) {
+			if(logfile >= 0) dprintf(logfile, "Error: failed to connect\n");
+			free_headers(*h);
 			socket_close(conn);
 			return false;
 		}
