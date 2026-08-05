@@ -85,7 +85,7 @@ static ssize_t recv_retry_err(conn_sock sock, void *msg, size_t len, int flags, 
 		case SSL_CONN:
 			int (*fn)(SSL*,void*,size_t,size_t*) = (flags & MSG_PEEK) ? SSL_peek_ex : SSL_read_ex;
 			retval = fn(sock.ssl, msg, len, &bytes);
-			if(retval <= 0) {
+			if(!retval) {
 				switch(SSL_get_error(sock.ssl, retval)) {
 				case SSL_ERROR_ZERO_RETURN:
 					return 0;
