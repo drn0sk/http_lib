@@ -316,6 +316,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 	siga.sa_handler = &exit_loop;
 	if(sigaction(SIGINT, &siga, NULL) < 0) return false;
 	if(sigaction(SIGTERM, &siga, NULL) < 0) return false;
+	siga.sa_handler = SIG_IGN;
 	if(sigaction(SIGPIPE, &siga, NULL) < 0) return false;
 	memset(&siga, 0, sizeof(struct sigaction));
 	siga.sa_sigaction = chld;
@@ -422,6 +423,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				socket_close(conn);
 				return false;
 			}
+			siga.sa_handler = SIG_IGN;
 			if(sigaction(SIGPIPE, &siga, NULL) < 0) {
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
@@ -429,7 +431,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				socket_close(conn);
 				return false;
 			}
-			siga.sa_handler = SIG_IGN;
 			siga.sa_flags = SA_NOCLDWAIT;
 			if(sigaction(SIGCHLD, &siga, NULL) < 0) {
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
@@ -1584,6 +1585,7 @@ bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int ht
 	siga.sa_handler = &exit_server;
 	if(sigaction(SIGINT, &siga, NULL) < 0) return false;
 	if(sigaction(SIGTERM, &siga, NULL) < 0) return false;
+	siga.sa_handler = SIG_IGN;
 	if(sigaction(SIGPIPE, &siga, NULL) < 0) return false;
 	if(log) {
 		// open log file
