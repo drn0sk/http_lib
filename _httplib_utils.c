@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <stdint.h>
 #include <openssl/ssl.h>
+#include <openssl/err.h>
 #include <unistd.h>
 
 bool url_decode(char *src, char **dst, size_t len) {
@@ -488,11 +489,13 @@ int read_chunked(conn_sock sock, char **content, size_t *content_len, bool disca
 }
 
 static int print_ssl_errors_callback(const char *str, size_t len, void *u) {
+	ssize_t rv;
 	return ((dprintf(*(int*)u, "SSL ERROR: ") < 11) &&
-			(write(*(int*)u, str, len) < len)) ? -1 : 0;
+			((rv = write(*(int*)u, str, len)) < 0 ||
+			 ((size_t)rv < len))) ? -1 : 0;
 }
 void print_ssl_errors(int logfile) {
-	return ERR_print_errors_cb(print_ssl_errors_callback, (void*)&logfile);
+	ERR_print_errors_cb(print_ssl_errors_callback, (void*)&logfile);
 }
 
 bool socket_close(conn_sock sock, int logfile) {

@@ -51,7 +51,8 @@ extern bool child;
 #define HTTPS 2
 // http_port is the port to listen to http requests on, if -1 a compiled in default is used. (ignored if protocols doesn't include HTTP)
 // https_port is the port to listen to https requests on, if -1 a compiled in default is used. (ignored if protocols doesn't include HTTPS)
+// if certificate_chain_file and/or private_key_file is NULL the compiled in default is used
 // returns true on successful termination or false on error
-bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int http_port, int https_port, int protocols, struct timeval timeout);
+bool server(char *directory, struct HTTP_Request_Handlers hls, char *log, int http_port, int https_port, int protocols, char *certificate_chain_file, char *private_key_file, struct timeval timeout);
 
 #endif /* HTTP_SERVER */

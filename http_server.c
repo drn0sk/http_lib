@@ -17,6 +17,8 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <assert.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 static void free_query(query_list q) {
 	query_list tmp;
@@ -356,7 +358,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 		if(!SSL_CTX_set_min_proto_version(conn.ctx, TLS1_2_VERSION)) {
 			if(logfile >= 0) dprintf(logfile, "ERROR: failed to set min tls version\n");
 			close(sockfd);
-			SSL_ctx_free(conn.ctx);
+			SSL_CTX_free(conn.ctx);
 			print_ssl_errors(logfile);
 			return false;
 		}
@@ -367,14 +369,14 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 		if (SSL_CTX_use_certificate_chain_file(conn.ctx, certificate_chain_file) <= 0) {
 			if(logfile >= 0) dprintf(logfile, "ERROR: failed to set certificate chain file\n");
 			close(sockfd);
-			SSL_ctx_free(conn.ctx);
+			SSL_CTX_free(conn.ctx);
 			print_ssl_errors(logfile);
 			return false;
 		}
-		if (SSL_CTX_use_PrivateKey_file(conn.ctx, PKEY_FILE, private_key_file) <= 0) {
+		if (SSL_CTX_use_PrivateKey_file(conn.ctx, private_key_file, SSL_FILETYPE_PEM) <= 0) {
 			if(logfile >= 0) dprintf(logfile, "ERROR: failed to set private key file\n");
 			close(sockfd);
-			SSL_ctx_free(conn.ctx);
+			SSL_CTX_free(conn.ctx);
 			print_ssl_errors(logfile);
 			return false;
 		}
