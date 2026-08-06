@@ -1503,54 +1503,48 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				free_headers(hdrs);
 				if(req.method != HEAD && content_len > 0) {
 					if(!sendfileall(conn, content_fd, content_len, logfile)) {
-						if(errno == EINVAL) {
+						//if(errno == EINVAL) {
 							ssize_t rv;
 							while((rv = socket_splice(content_fd, NULL, conn, content_len, SPLICE_F_MOVE)) < 0 || (size_t)rv < content_len) {
 								if(rv == 0) {
 									close_conn = true;
-									retval = false;
+									retval = true;
 									break;
 								}
 								if(rv < 0) {
-									if(errno == EBADF || errno == EINVAL) {
+									if(errno == ENOMEM) continue;
+									//if(errno == EBADF || errno == EINVAL) {
 										char buf[content_len];
 										size_t bytes_read = 0;
 										rv = -1;
 										while(bytes_read < content_len) {
-											rv = read(content_fd, buf, content_len);
-											if(rv < 0) {
-												close_conn = true;
-												retval = false;
-												break;
-											}
-											if(rv == 0) break;
-											bytes_read += retval;
+											rv = read(content_fd, buf + bytes_read, content_len - bytes_read);
+											if(rv <= 0) break;
+											bytes_read += rv;
 										}
 										if(bytes_read < content_len) {
+											if(logfile >= 0) dprintf(logfile, "ERROR: Failed to read response from file (%d): read %zu of %zu\n", errno, bytes_read, content_len);
 											close_conn = true;
 											retval = (rv == 0);
 											break;
 										}
 										if(!sendall(conn, buf, content_len, 0, logfile)) {
+											if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send response body (%d)\n", errno);
 											close_conn = true;
 											retval = false;
 											break;
 										}
-									}
-									switch(errno) {
-									case ENOMEM:
-										continue;
-									}
-									close_conn = true;
-									retval = false;
-									break;
+									//}
+									//close_conn = true;
+									//retval = false;
+									//break;
 								}
 								content_len -= rv;
 							}
-						} else {
-							if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send response body (%d)\n", errno);
-							close_conn = true;
-						}
+						//} else {
+						//	if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send response body (%d)\n", errno);
+						//	close_conn = true;
+						//}
 					}
 				}
 				if(content_fd >= 0) close(content_fd);
