@@ -506,14 +506,14 @@ bool socket_close(conn_sock sock, int logfile) {
 		int sfd = SSL_get_fd(sock.ssl);
 		SSL_free(sock.ssl);
 		SSL_CTX_free(sock.ctx);
-		print_ssl_errors(logfile);
+		if(logfile >= 0) print_ssl_errors(logfile);
 		int tmp2 = 0;
 		if(sfd >= 0) tmp2 = close(sfd);
-		if(tmp1 < 0) dprintf(logfile, "ERROR: %s\n", strerror(errno));
+		if(tmp1 < 0 && logfile >= 0) dprintf(logfile, "ERROR: %s\n", strerror(errno));
 		retval = (tmp1 == 1) && !tmp2;
 	} else if(sock.type == NORMAL) {
 		retval = (!close(sock.fd)) ? true : false;
-		if(!retval) dprintf(logfile, "ERROR: %s\n", strerror(errno));
+		if(!retval && logfile >= 0) dprintf(logfile, "ERROR: %s\n", strerror(errno));
 	}
 	return retval;
 }

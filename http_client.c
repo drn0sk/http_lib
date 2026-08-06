@@ -148,6 +148,22 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 			if(logfile >= 0) dprintf(logfile, "Error: failed to create ssl_ctx\n");
 			free_headers(*h);
 			close(sockfd);
+			if(logfile >= 0) print_ssl_errors(logfile);
+			return false;
+		}
+		SSL_CTX_set_verify(conn.ctx, SSL_VERIFY_PEER, NULL);
+		if(!SSL_CTX_set_default_verify_paths(conn.ctx)) {
+			if(logfile >= 0) dprintf(logfile, "Error: failed to set certificate store path\n");
+			free_headers(*h);
+			close(sockfd);
+			if(logfile >= 0) print_ssl_errors(logfile);
+			return false;
+		}
+		if(!SSL_CTX_set_min_proto_version(conn.ctx, TLS1_2_VERSION)) {
+			if(logfile >= 0) dprintf(logfile, "Error: failed to set minimum TLS version\n");
+			free_headers(*h);
+			close(sockfd);
+			if(logfile >= 0) print_ssl_errors(logfile);
 			return false;
 		}
 		conn.ssl = SSL_new(conn.ctx);
@@ -156,6 +172,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 			free_headers(*h);
 			close(sockfd);
 			SSL_CTX_free(conn.ctx);
+			if(logfile >= 0) print_ssl_errors(logfile);
 			return false;
 		}
 		if(!SSL_set_fd(conn.ssl, sockfd)) {
@@ -165,8 +182,23 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 			socket_close(conn, logfile);
 			return false;
 		}
+		if(!SSL_set_tlsext_host_name(conn.ssl, hostname)) {
+			if(logfile >= 0) dprintf(logfile, "Error: failed to set hostname\n");
+			free_headers(*h);
+			socket_close(conn, logfile);
+			return false;
+		}
+		if(!SSL_set1_host(conn.ssl, hostname)) {
+			if(logfile >= 0) dprintf(logfile, "Error: failed to set hostname\n");
+			free_headers(*h);
+			socket_close(conn, logfile);
+			return false;
+		}
 		if(SSL_connect(conn.ssl) <= 0) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to connect\n");
+			if(SSL_get_verify_result(conn.ssl) != X509_V_OK &&
+					logfile >= 0) dprintf(logfile, "Verify error: %s\n",
+						X509_verify_cert_error_string(SSL_get_verify_result(conn.ssl)));
 			free_headers(*h);
 			socket_close(conn, logfile);
 			return false;
