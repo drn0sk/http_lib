@@ -505,7 +505,7 @@ bool socket_close(conn_sock sock, int logfile) {
 		while( (tmp1 = SSL_shutdown(sock.ssl)) == 0 ) {}
 		int sfd = SSL_get_fd(sock.ssl);
 		SSL_free(sock.ssl);
-		SSL_CTX_free(sock.ctx);
+		//SSL_CTX_free(sock.ctx);
 		if(logfile >= 0) print_ssl_errors(logfile);
 		int tmp2 = 0;
 		if(sfd >= 0) tmp2 = close(sfd);

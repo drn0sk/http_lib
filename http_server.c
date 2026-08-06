@@ -407,12 +407,16 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				close(connfd);
 				connfd = -1;
+				//SSL_CTX_free(conn.ctx);
+				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			if(sigaction(SIGTERM, &siga, NULL) < 0) {
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				close(connfd);
 				connfd = -1;
+				//SSL_CTX_free(conn.ctx);
+				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			siga.sa_handler = SIG_IGN;
@@ -420,6 +424,8 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				close(connfd);
 				connfd = -1;
+				//SSL_CTX_free(conn.ctx);
+				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			siga.sa_flags = SA_NOCLDWAIT;
@@ -427,19 +433,25 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				close(connfd);
 				connfd = -1;
+				//SSL_CTX_free(conn.ctx);
+				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			if(setsockopt(connfd, SOL_SOCKET, SO_RCVTIMEO, (const void*)&timeout, sizeof(timeout)) == -1) {
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to set timeout on socket\n");
 				close(connfd);
 				connfd = -1;
-				break;
+				//SSL_CTX_free(conn.ctx);
+				//if(logfile >= 0) print_ssl_errors(logfile);
+				return false;
 			}
 			if(setsockopt(connfd, SOL_SOCKET, SO_SNDTIMEO, (const void*)&timeout, sizeof(timeout)) == -1) {
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to set timeout on socket\n");
 				close(connfd);
 				connfd = -1;
-				break;
+				//SSL_CTX_free(conn.ctx);
+				//if(logfile >= 0) print_ssl_errors(logfile);
+				return false;
 			}
 			if(https) {
 				ERR_clear_error();
@@ -449,21 +461,25 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 					if(logfile >= 0) dprintf(logfile, "ERROR: failed create ssl\n");
 					close(connfd);
 					connfd = -1;
-					SSL_CTX_free(conn.ctx);
-					if(logfile >= 0) print_ssl_errors(logfile);
-					continue;
+					//SSL_CTX_free(conn.ctx);
+					//if(logfile >= 0) print_ssl_errors(logfile);
+					return false;
 				}
 				if(!SSL_set_fd(conn.ssl, connfd)) {
 					if(logfile >= 0) dprintf(logfile, "ERROR: failed to set fd on ssl\n");
 					close(connfd);
 					connfd = -1;
 					socket_close(conn, logfile);
-					continue;
+					//SSL_CTX_free(conn.ctx);
+					//if(logfile >= 0) print_ssl_errors(logfile);
+					return false;
 				}
 				if(SSL_accept(conn.ssl) <= 0) {
 					if(logfile >= 0) dprintf(logfile, "ERROR: failed ssl handshake\n");
 					socket_close(conn, logfile);
-					continue;
+					//SSL_CTX_free(conn.ctx);
+					//if(logfile >= 0) print_ssl_errors(logfile);
+					return false;
 				}
 			} else {
 				conn.type = NORMAL;
@@ -476,6 +492,8 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 				socket_close(conn, logfile);
+				//SSL_CTX_free(conn.ctx);
+				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			struct timeval start, current, tmp2;
@@ -1540,6 +1558,8 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				free_headers(h);
 			}
 			socket_close(conn, logfile);
+			//SSL_CTX_free(sock.ctx);
+			//if(logfile >= 0) print_ssl_errors(logfile);
 			return retval;
 		} else {
 			socket_close(conn, logfile);
@@ -1551,6 +1571,8 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 			p = 0;
 		}
 	}
+	SSL_CTX_free(conn.ctx);
+	if(logfile >= 0) print_ssl_errors(logfile);
 	if(p > 0) kill(p, SIGTERM);
 	kill_pidlist(ps, SIGTERM);
 	free_pidlist(ps);
