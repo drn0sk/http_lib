@@ -337,8 +337,8 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 		if(!SSL_CTX_set_min_proto_version(conn.ctx, TLS1_2_VERSION)) {
 			if(logfile >= 0) dprintf(logfile, "ERROR: failed to set minimum tls version\n");
 			close(sockfd);
-			SSL_CTX_free(conn.ctx);
 			if(logfile >= 0) print_ssl_errors(logfile);
+			SSL_CTX_free(conn.ctx);
 			return false;
 		}
 		uint64_t opts = SSL_OP_IGNORE_UNEXPECTED_EOF |
@@ -348,15 +348,15 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 		if (SSL_CTX_use_certificate_chain_file(conn.ctx, certificate_chain_file) <= 0) {
 			if(logfile >= 0) dprintf(logfile, "ERROR: failed to set certificate chain file\n");
 			close(sockfd);
-			SSL_CTX_free(conn.ctx);
 			if(logfile >= 0) print_ssl_errors(logfile);
+			SSL_CTX_free(conn.ctx);
 			return false;
 		}
 		if (SSL_CTX_use_PrivateKey_file(conn.ctx, private_key_file, SSL_FILETYPE_PEM) <= 0) {
 			if(logfile >= 0) dprintf(logfile, "ERROR: failed to set private key file\n");
 			close(sockfd);
-			SSL_CTX_free(conn.ctx);
 			if(logfile >= 0) print_ssl_errors(logfile);
+			SSL_CTX_free(conn.ctx);
 			return false;
 		}
 		SSL_CTX_set_verify(conn.ctx, SSL_VERIFY_NONE, NULL);
@@ -386,16 +386,12 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				close(connfd);
 				connfd = -1;
-				//SSL_CTX_free(conn.ctx);
-				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			if(sigaction(SIGTERM, &siga, NULL) < 0) {
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				close(connfd);
 				connfd = -1;
-				//SSL_CTX_free(conn.ctx);
-				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			siga.sa_handler = SIG_IGN;
@@ -403,8 +399,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				close(connfd);
 				connfd = -1;
-				//SSL_CTX_free(conn.ctx);
-				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			siga.sa_flags = SA_NOCLDWAIT;
@@ -412,24 +406,18 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to add signal handler\n");
 				close(connfd);
 				connfd = -1;
-				//SSL_CTX_free(conn.ctx);
-				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			if(setsockopt(connfd, SOL_SOCKET, SO_RCVTIMEO, (const void*)&timeout, sizeof(timeout)) == -1) {
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to set timeout on socket\n");
 				close(connfd);
 				connfd = -1;
-				//SSL_CTX_free(conn.ctx);
-				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			if(setsockopt(connfd, SOL_SOCKET, SO_SNDTIMEO, (const void*)&timeout, sizeof(timeout)) == -1) {
 				if(logfile >= 0) dprintf(logfile, "ERROR: failed to set timeout on socket\n");
 				close(connfd);
 				connfd = -1;
-				//SSL_CTX_free(conn.ctx);
-				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			if(https) {
@@ -440,8 +428,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 					if(logfile >= 0) dprintf(logfile, "ERROR: failed create ssl\n");
 					close(connfd);
 					connfd = -1;
-					//SSL_CTX_free(conn.ctx);
-					//if(logfile >= 0) print_ssl_errors(logfile);
 					return false;
 				}
 				if(!SSL_set_fd(conn.ssl, connfd)) {
@@ -449,15 +435,11 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 					close(connfd);
 					connfd = -1;
 					socket_close(conn, logfile);
-					//SSL_CTX_free(conn.ctx);
-					//if(logfile >= 0) print_ssl_errors(logfile);
 					return false;
 				}
 				if(SSL_accept(conn.ssl) <= 0) {
 					if(logfile >= 0) dprintf(logfile, "ERROR: failed ssl handshake\n");
 					socket_close(conn, logfile);
-					//SSL_CTX_free(conn.ctx);
-					//if(logfile >= 0) print_ssl_errors(logfile);
 					return false;
 				}
 			} else {
@@ -471,8 +453,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				char *err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n";
 				sendall(conn, err_resp, strlen(err_resp), MSG_NOSIGNAL, logfile);
 				socket_close(conn, logfile);
-				//SSL_CTX_free(conn.ctx);
-				//if(logfile >= 0) print_ssl_errors(logfile);
 				return false;
 			}
 			struct timeval start, current, tmp2;
@@ -1482,48 +1462,38 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				free_headers(hdrs);
 				if(req.method != HEAD && content_len > 0) {
 					if(!sendfileall(conn, content_fd, content_len, logfile)) {
-						//if(errno == EINVAL) {
-							ssize_t rv;
-							while((rv = socket_splice(content_fd, NULL, conn, content_len, SPLICE_F_MOVE)) < 0 || (size_t)rv < content_len) {
-								if(rv == 0) {
+						ssize_t rv;
+						while((rv = socket_splice(content_fd, NULL, conn, content_len, SPLICE_F_MOVE)) < 0 || (size_t)rv < content_len) {
+							if(rv == 0) {
+								close_conn = true;
+								retval = true;
+								break;
+							}
+							if(rv < 0) {
+								if(errno == ENOMEM) continue;
+								char buf[content_len];
+								size_t bytes_read = 0;
+								rv = -1;
+								while(bytes_read < content_len) {
+									rv = read(content_fd, buf + bytes_read, content_len - bytes_read);
+									if(rv <= 0) break;
+									bytes_read += rv;
+								}
+								if(bytes_read < content_len) {
+									if(logfile >= 0) dprintf(logfile, "ERROR: Failed to read response from file (%d): read %zu of %zu\n", errno, bytes_read, content_len);
 									close_conn = true;
-									retval = true;
+									retval = (rv == 0);
 									break;
 								}
-								if(rv < 0) {
-									if(errno == ENOMEM) continue;
-									//if(errno == EBADF || errno == EINVAL) {
-										char buf[content_len];
-										size_t bytes_read = 0;
-										rv = -1;
-										while(bytes_read < content_len) {
-											rv = read(content_fd, buf + bytes_read, content_len - bytes_read);
-											if(rv <= 0) break;
-											bytes_read += rv;
-										}
-										if(bytes_read < content_len) {
-											if(logfile >= 0) dprintf(logfile, "ERROR: Failed to read response from file (%d): read %zu of %zu\n", errno, bytes_read, content_len);
-											close_conn = true;
-											retval = (rv == 0);
-											break;
-										}
-										if(!sendall(conn, buf, content_len, 0, logfile)) {
-											if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send response body (%d)\n", errno);
-											close_conn = true;
-											retval = false;
-											break;
-										}
-									//}
-									//close_conn = true;
-									//retval = false;
-									//break;
+								if(!sendall(conn, buf, content_len, 0, logfile)) {
+									if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send response body (%d)\n", errno);
+									close_conn = true;
+									retval = false;
+									break;
 								}
-								content_len -= rv;
 							}
-						//} else {
-						//	if(logfile >= 0) dprintf(logfile, "ERROR: Failed to send response body (%d)\n", errno);
-						//	close_conn = true;
-						//}
+							content_len -= rv;
+						}
 					}
 				}
 				if(content_fd >= 0) close(content_fd);
@@ -1531,8 +1501,6 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				free_headers(h);
 			}
 			socket_close(conn, logfile);
-			//SSL_CTX_free(sock.ctx);
-			//if(logfile >= 0) print_ssl_errors(logfile);
 			return retval;
 		} else {
 			socket_close(conn, logfile);
@@ -1544,8 +1512,8 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 			p = 0;
 		}
 	}
-	SSL_CTX_free(conn.ctx);
 	if(logfile >= 0) print_ssl_errors(logfile);
+	if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 	if(p > 0) kill(p, SIGTERM);
 	kill_pidlist(ps, SIGTERM);
 	free_pidlist(ps);

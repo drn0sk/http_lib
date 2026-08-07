@@ -524,10 +524,14 @@ int read_chunked(conn_sock sock, char **content, size_t *content_len, bool disca
 }
 
 static int print_ssl_errors_callback(const char *str, size_t len, void *u) {
-	ssize_t rv;
-	return ((dprintf(*(int*)u, "SSL ERROR: ") < 11) &&
-			((rv = write(*(int*)u, str, len)) < 0 ||
-			 ((size_t)rv < len))) ? -1 : 0;
+	if(str && len > 0) {
+		const char *pre = "SSL ERROR: ";
+		if(dprintf(*(int*)u, pre) < (ssize_t)(sizeof(pre) - 1)) return -1;
+		ssize_t rv = write(*(int*)u, str, len);
+		if(rv < 0 || (size_t)rv < len) return -1;
+		if(write(*(int*)u, "\n", 1) < 1) return -1;
+	}
+	return 0;
 }
 void print_ssl_errors(int logfile) {
 	ERR_print_errors_cb(print_ssl_errors_callback, (void*)&logfile);
@@ -540,7 +544,6 @@ bool socket_close(conn_sock sock, int logfile) {
 		while( (tmp1 = SSL_shutdown(sock.ssl)) == 0 ) {}
 		int sfd = SSL_get_fd(sock.ssl);
 		SSL_free(sock.ssl);
-		//SSL_CTX_free(sock.ctx);
 		if(logfile >= 0) print_ssl_errors(logfile);
 		int tmp2 = 0;
 		if(sfd >= 0) tmp2 = close(sfd);

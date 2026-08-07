@@ -136,20 +136,22 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 			if(logfile >= 0) dprintf(logfile, "Error: failed to set certificate store path\n");
 			close(sockfd);
 			if(logfile >= 0) print_ssl_errors(logfile);
+			SSL_CTX_free(conn.ctx);
 			return false;
 		}
 		if(!SSL_CTX_set_min_proto_version(conn.ctx, TLS1_2_VERSION)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to set minimum TLS version\n");
 			close(sockfd);
 			if(logfile >= 0) print_ssl_errors(logfile);
+			SSL_CTX_free(conn.ctx);
 			return false;
 		}
 		conn.ssl = SSL_new(conn.ctx);
 		if(!conn.ssl) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to create ssl\n");
 			close(sockfd);
-			SSL_CTX_free(conn.ctx);
 			if(logfile >= 0) print_ssl_errors(logfile);
+			SSL_CTX_free(conn.ctx);
 			return false;
 		}
 		if(!SSL_set_fd(conn.ssl, sockfd)) {
@@ -157,21 +159,18 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 			close(sockfd);
 			socket_close(conn, logfile);
 			SSL_CTX_free(conn.ctx);
-			if(logfile >= 0) print_ssl_errors(logfile);
 			return false;
 		}
 		if(!SSL_set_tlsext_host_name(conn.ssl, hostname)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to set hostname\n");
 			socket_close(conn, logfile);
 			SSL_CTX_free(conn.ctx);
-			if(logfile >= 0) print_ssl_errors(logfile);
 			return false;
 		}
 		if(!SSL_set1_host(conn.ssl, hostname)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to set hostname\n");
 			socket_close(conn, logfile);
 			SSL_CTX_free(conn.ctx);
-			if(logfile >= 0) print_ssl_errors(logfile);
 			return false;
 		}
 		if(SSL_connect(conn.ssl) <= 0) {
@@ -181,7 +180,6 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 						X509_verify_cert_error_string(SSL_get_verify_result(conn.ssl)));
 			socket_close(conn, logfile);
 			SSL_CTX_free(conn.ctx);
-			if(logfile >= 0) print_ssl_errors(logfile);
 			return false;
 		}
 	} else {
@@ -192,8 +190,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 	for(headers tmp = *h; tmp; tmp = tmp->rest) {
 		if(!*tmp->header || !*tmp->value) {
 			socket_close(conn, logfile);
-			SSL_CTX_free(conn.ctx);
-			if(logfile >= 0) print_ssl_errors(logfile);
+			if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 			return false;
 		}
 		hdrs_len += strlen(tmp->header) + strlen(tmp->value) + 4; // length of header + length of value + (length of "\r\n" and ": ")
@@ -203,8 +200,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 	if(body && body_len > 0) {
 		if(asprintf(&length, "%ju", body_len) < 0) {
 			socket_close(conn, logfile);
-			SSL_CTX_free(conn.ctx);
-			if(logfile >= 0) print_ssl_errors(logfile);
+			if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 			return false;
 		}
 		hdrs_len += 14 + strlen(length);
@@ -213,8 +209,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 	char *hdrs = malloc(hdrs_len);
 	if(!hdrs) {
 		socket_close(conn, logfile);
-		SSL_CTX_free(conn.ctx);
-		if(logfile >= 0) print_ssl_errors(logfile);
+		if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 		free(length);
 		return false;
 	}
@@ -264,8 +259,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 	if(asprintf(&request, "%s %s%s%s%s%s %s/1.1\r\n%s\r\n", strmeth(m), location, (query)?"?":"", (query)?query:"", (frag)?"#":"", (frag)?frag:"", (https) ? "HTTPS" : "HTTP", hdrs) == -1) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to create request string.\n");
 		socket_close(conn, logfile);
-		SSL_CTX_free(conn.ctx);
-		if(logfile >= 0) print_ssl_errors(logfile);
+		if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 		free(hdrs);
 		return false;
 	}
@@ -274,8 +268,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 	if(!sendall(conn, request, len, 0, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to send request.\n");
 		socket_close(conn, logfile);
-		SSL_CTX_free(conn.ctx);
-		if(logfile >= 0) print_ssl_errors(logfile);
+		if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 		free(request);
 		return false;
 	}
@@ -284,8 +277,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 		if(!sendall(conn, body, body_len, 0, logfile)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to send request body.\n");
 			socket_close(conn, logfile);
-			SSL_CTX_free(conn.ctx);
-			if(logfile >= 0) print_ssl_errors(logfile);
+			if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 			return false;
 		}
 	}
@@ -297,8 +289,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 	if(recvline(conn, &statusLine, &stLen, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "recvline: %s\n", strerror(errno));
 		socket_close(conn, logfile);
-		SSL_CTX_free(conn.ctx);
-		if(logfile >= 0) print_ssl_errors(logfile);
+		if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 		free(statusLine);
 		return false;
 	}
@@ -306,8 +297,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 	if(!parse_status(statusLine, stat, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to parse status: %s\n", statusLine);
 		socket_close(conn, logfile);
-		SSL_CTX_free(conn.ctx);
-		if(logfile >= 0) print_ssl_errors(logfile);
+		if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 		free(statusLine);
 		return false;
 	}
@@ -318,8 +308,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 	if(stat->code >= 400) {
 		// error status code
 		socket_close(conn, logfile);
-		SSL_CTX_free(conn.ctx);
-		if(logfile >= 0) print_ssl_errors(logfile);
+		if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 		free_status(stat);
 		return true;
 	}
@@ -327,8 +316,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 	if(read_headers(conn, h, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to read headers.\n");
 		socket_close(conn, logfile);
-		SSL_CTX_free(conn.ctx);
-		if(logfile >= 0) print_ssl_errors(logfile);
+		if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 		free_status(stat);
 		return false;
 	}
@@ -339,8 +327,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 			if(read_chunked(conn, (char**)contents, contents_len, false, logfile)) {
 				if(logfile >= 0) dprintf(logfile, "Error: failed to read chunked encoding\n");
 				socket_close(conn, logfile);
-				SSL_CTX_free(conn.ctx);
-				if(logfile >= 0) print_ssl_errors(logfile);
+				if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 				free_status(stat);
 				free_headers(*h);
 				return false;
@@ -350,8 +337,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 			*contents = malloc(*contents_len+1);
 			if(!*contents) {
 				socket_close(conn, logfile);
-				SSL_CTX_free(conn.ctx);
-				if(logfile >= 0) print_ssl_errors(logfile);
+				if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 				free_status(stat);
 				free_headers(*h);
 				return false;
@@ -359,8 +345,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 			if(recvall(conn, *contents, *contents_len, 0, logfile)) {
 				if(logfile >= 0) dprintf(logfile, "Error: failed to read content with length: %ld\n", *contents_len);
 				socket_close(conn, logfile);
-				SSL_CTX_free(conn.ctx);
-				if(logfile >= 0) print_ssl_errors(logfile);
+				if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 				free_status(stat);
 				free_headers(*h);
 				free(*contents);
@@ -370,8 +355,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 		}
 	}
 	socket_close(conn, logfile);
-	SSL_CTX_free(conn.ctx);
-	if(logfile >= 0) print_ssl_errors(logfile);
+	if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 	return true;
 }
 
