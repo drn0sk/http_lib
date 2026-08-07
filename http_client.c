@@ -119,7 +119,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 		freeaddrinfo(servinfo);
 		return false;
 	}
-	bool https = (((struct sockaddr_in*)p->ai_addr)->sin_port == 443);
+	bool https = (ntohs(((struct sockaddr_in*)p->ai_addr)->sin_port) == 443);
 	freeaddrinfo(servinfo);
 	conn_sock conn = {0};
 	if(https) {
