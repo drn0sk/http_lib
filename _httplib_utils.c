@@ -10,6 +10,18 @@
 #include <openssl/err.h>
 #include <unistd.h>
 
+const char *strmeth(Method m) {
+	switch(m) {
+	case GET:
+		return "GET";
+	case HEAD:
+		return "HEAD";
+	case POST:
+		return "POST";
+	default:
+		return NULL;
+	}
+}
 bool url_decode(char *src, char **dst, size_t len) {
 	if(!src) return false;
 	if(!*dst) {
@@ -244,18 +256,28 @@ void free_headers(headers h) {
 	}
 }
 
-bool add_header(headers *h, char *header, char *value) {
+bool add_header(headers *h, const char *header, char *value) {
 	if(!header || !value) return false;
 	headers head = (headers)malloc(sizeof(struct headers));
 	if(!head) return false;
-	head->header = header;
+	head->header = strdup(header);
+	if(!head->header) {
+		free(head);
+		return false;
+	}
 	head->value = value;
 	head->rest = *h;
 	*h = head;
 	return true;
 }
 
-bool update_header(headers *h, char *header, char *value) {
+bool add_header_const(headers *h, const char *header, const char *value) {
+	char *val = strdup(value);
+	if(!value) return false;
+	return add_header(h, header, val);
+}
+
+bool update_header(headers *h, const char *header, char *value) {
 	if(!header || !value) return false;
 	for(headers h2 = *h; h2; h2 = h2->rest) {
 		if(strcasecmp(header, h2->header) == 0) {
@@ -267,7 +289,13 @@ bool update_header(headers *h, char *header, char *value) {
 	return add_header(h, header, value);
 }
 
-bool append_header(headers *h, char *header, char *value) {
+bool update_header_const(headers *h, const char *header, const char *value) {
+	char *val = strdup(value);
+	if(!value) return false;
+	return update_header(h, header, val);
+}
+
+bool append_header(headers *h, const char *header, char *value) {
 	if(!header || !value) return false;
 	for(headers h2 = *h; h2; h2 = h2->rest) {
 		if(strcasecmp(header, h2->header) == 0) {
@@ -282,7 +310,13 @@ bool append_header(headers *h, char *header, char *value) {
 	return add_header(h, header, value);
 }
 
-const char *get_header(headers h, char *header) {
+bool append_header_const(headers *h, const char *header, const char *value) {
+	char *val = strdup(value);
+	if(!value) return false;
+	return append_header(h, header, val);
+}
+
+const char *get_header(headers h, const char *header) {
 	if(!header) {
 		return NULL;
 	}
@@ -294,7 +328,7 @@ const char *get_header(headers h, char *header) {
 	return NULL;
 }
 
-bool contains_header(headers h, char *header) {
+bool contains_header(headers h, const char *header) {
 	return (bool)get_header(h, header);
 }
 
@@ -383,6 +417,7 @@ int read_headers(conn_sock s, headers *h, int logfile) {
 			free_headers(hdrs);
 			break;
 		}
+		free(header);
 	}
 	if(line) free(line);
 	if(!retval) *h = hdrs;

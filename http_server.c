@@ -156,27 +156,6 @@ static ssize_t socket_splice(int in, off_t *in_off, conn_sock out, size_t size, 
 	return -1;
 }
 
-enum Method {
-	UNSUPPORTED = 0,
-	GET,
-	HEAD,
-	POST,
-};
-typedef enum Method Method;
-
-static const char *strmeth(Method m) {
-	switch(m) {
-	case GET:
-		return "GET";
-	case HEAD:
-		return "HEAD";
-	case POST:
-		return "POST";
-	default:
-		return NULL;
-	}
-}
-
 struct request {
 	Method method;
 	char *target;
@@ -1009,7 +988,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 				}
 				if(status < 200 || status == 204) content_len = 0;
 				close_conn |= (status >= 500);
-				if(close_conn && !update_header(&hdrs, strdup("Connection"), strdup("close"))) {
+				if(close_conn && !update_header_const(&hdrs, "Connection", "close")) {
 					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to add header\n");
 					free(type);
 					free(etag);
@@ -1022,7 +1001,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 					free_headers(h);
 					break;
 				}
-				if((status < 500) && !update_header(&hdrs, strdup("Date"), strdup(date))) {
+				if((status < 500) && !update_header_const(&hdrs, "Date", date)) {
 					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to add header\n");
 					free(type);
 					free(etag);
@@ -1036,7 +1015,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 					break;
 				}
 				if(content_len > 0) {
-					if(!update_header(&hdrs, strdup("Content-Type"), type)) {
+					if(!update_header(&hdrs, "Content-Type", type)) {
 						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to add header\n");
 						free(type);
 						free(etag);
@@ -1124,7 +1103,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 					break;
 				}
 				last_modified[29] = '\0';
-				if(!update_header(&hdrs, strdup("Last-Modified"), strdup(last_modified))) {
+				if(!update_header_const(&hdrs, "Last-Modified", last_modified)) {
 					free(etag);
 					if(logfile >= 0) dprintf(logfile, "ERROR: Failed to add header\n");
 					if(content_fd >= 0) close(content_fd);
@@ -1136,7 +1115,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 					free_headers(h);
 					break;
 				}
-				if(content_len > 0 && etag && !update_header(&hdrs, strdup("ETag"), etag)) {
+				if(content_len > 0 && etag && !update_header(&hdrs, "ETag", etag)) {
 					free(etag);
 					if(content_fd >= 0) close(content_fd);
 					free_headers(hdrs);
@@ -1427,7 +1406,7 @@ static bool _server(char *directory, struct HTTP_Request_Handlers hls, int logfi
 						free_headers(h);
 						break;
 					}
-					if(!update_header(&hdrs, strdup("Content-Range"), range)) {
+					if(!update_header(&hdrs, "Content-Range", range)) {
 						if(logfile >= 0) dprintf(logfile, "ERROR: Failed to create range header\n");
 						if(content_fd >= 0) close(content_fd);
 						free_headers(hdrs);
