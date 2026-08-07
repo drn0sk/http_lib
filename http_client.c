@@ -598,7 +598,7 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 // if content_type is not NULL, the Content-Type header is set to it
 // returns status in stat, headers in h, and contents in contents (length in contents_len)
 // return value of true for success, and false otherwise
-bool http_request(Method m, char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, void **content, size_t *content_len, bool redir, char *log) {
+bool http_request(Method m, char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, char **content, uintmax_t *content_len, bool redir, char *log) {
 	int logfile = -1;
 	if(log) {
 		// open log file
@@ -693,7 +693,7 @@ bool http_request(Method m, char *url, status *stat, headers *h, char *body, uin
 		}
 		status new_stat = {0};
 		headers new_h = in_hdrs;
-		void *new_content = NULL;
+		char *new_content = NULL;
 		uintmax_t new_content_len = 0;
 		if(!parse_url(url, &hostname, &location, &protocol, &query, &fragment, logfile) || !hostname) {
 			free(url);
@@ -755,12 +755,12 @@ bool http_request(Method m, char *url, status *stat, headers *h, char *body, uin
 	}
 	return retv;
 }
-bool get_request(char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, void **content, size_t *content_len, bool redir, char *log) {
+bool get_request(char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, char **content, uintmax_t *content_len, bool redir, char *log) {
 	return http_request(GET, url, stat, h, body, body_len, content_type, content, content_len, redir, log);
 }
-bool head_request(char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, void **content, size_t *content_len, bool redir, char *log) {
+bool head_request(char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, char **content, uintmax_t *content_len, bool redir, char *log) {
 	return http_request(HEAD, url, stat, h, body, body_len, content_type, content, content_len, redir, log);
 }
-bool post_request(char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, void **content, size_t *content_len, bool redir, char *log) {
+bool post_request(char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, char **content, uintmax_t *content_len, bool redir, char *log) {
 	return http_request(POST, url, stat, h, body, body_len, content_type, content, content_len, redir, log);
 }
