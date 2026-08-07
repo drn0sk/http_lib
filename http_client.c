@@ -49,24 +49,6 @@ void free_status(status *st) {
 	st->reason = NULL;
 }
 
-//static void *get_in_addr(struct sockaddr *sa, int logfile) {
-//        switch(sa->sa_family) {
-//        case AF_INET:
-//                // IPv4
-//                return &(((struct sockaddr_in*)sa)->sin_addr);
-//                break;
-//        case AF_INET6:
-//                // IPv6
-//                return &(((struct sockaddr_in6*)sa)->sin6_addr);
-//                break;
-//        default:
-//                // ???
-//                if(logfile >= 0) dprintf(logfile, "Unknown family:\t%d\n", sa->sa_family);
-//                return NULL;
-//                break;
-//        }
-//}
-
 static bool parse_status(char *status_line, status *st, int logfile) {
 	char *sv = NULL;
 	char *ver, *codestr, *reason, *v1, *v2;
@@ -99,10 +81,11 @@ static bool parse_status(char *status_line, status *st, int logfile) {
 	return true;
 }
 
-// perfoms a get request to protocol://hostname for location using headers in h on input if not NULL
+// perfoms a HTTP(S) request with method m to protocol://hostname for location using headers in h on input if not NULL
 // returns status in stat, headers in h, and contents in contents (length in contents_len)
 // return value of true for success, and false otherwise
-static bool _get_request(char *hostname, char *location, char *protocol, char *query, char *frag, status *stat, headers *h, void **contents, uintmax_t *contents_len, int logfile) {
+static bool _http_request(Method m, char *hostname, char *location, char *protocol, char *query, char *frag, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, char **contents, uintmax_t *contents_len, int logfile) {
+	if(!hostname || !*hostname) return false;
 	struct addrinfo hints = {0}, *servinfo;
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
@@ -114,7 +97,6 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	if(!url_decode(hostname, &dnamep, strlen(hostname) + 1)) return false;
 	if((rv = getaddrinfo(decoded_name, protocol, &hints, &servinfo)) != 0) {
 		if(logfile >= 0) dprintf(logfile, "Error: %s\n", gai_strerror(rv));
-		free_headers(*h);
 		return false;
 	}
 
@@ -133,7 +115,6 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 
 	if(p == NULL) {
 		if(logfile >= 0) dprintf(logfile, "Error: could not find hostname: '%s', with protocol: '%s'\n", decoded_name, protocol);
-		free_headers(*h);
 		if(sockfd >= 0) close(sockfd);
 		freeaddrinfo(servinfo);
 		return false;
@@ -146,7 +127,6 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		conn.ctx = SSL_CTX_new(TLS_client_method());
 		if(!conn.ctx) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to create ssl_ctx\n");
-			free_headers(*h);
 			close(sockfd);
 			if(logfile >= 0) print_ssl_errors(logfile);
 			return false;
@@ -154,14 +134,12 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		SSL_CTX_set_verify(conn.ctx, SSL_VERIFY_PEER, NULL);
 		if(!SSL_CTX_set_default_verify_paths(conn.ctx)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to set certificate store path\n");
-			free_headers(*h);
 			close(sockfd);
 			if(logfile >= 0) print_ssl_errors(logfile);
 			return false;
 		}
 		if(!SSL_CTX_set_min_proto_version(conn.ctx, TLS1_2_VERSION)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to set minimum TLS version\n");
-			free_headers(*h);
 			close(sockfd);
 			if(logfile >= 0) print_ssl_errors(logfile);
 			return false;
@@ -169,7 +147,6 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		conn.ssl = SSL_new(conn.ctx);
 		if(!conn.ssl) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to create ssl\n");
-			free_headers(*h);
 			close(sockfd);
 			SSL_CTX_free(conn.ctx);
 			if(logfile >= 0) print_ssl_errors(logfile);
@@ -177,7 +154,6 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		}
 		if(!SSL_set_fd(conn.ssl, sockfd)) {
 			if(logfile >= 0) dprintf(logfile, "Error: \n");
-			free_headers(*h);
 			close(sockfd);
 			socket_close(conn, logfile);
 			SSL_CTX_free(conn.ctx);
@@ -186,7 +162,6 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		}
 		if(!SSL_set_tlsext_host_name(conn.ssl, hostname)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to set hostname\n");
-			free_headers(*h);
 			socket_close(conn, logfile);
 			SSL_CTX_free(conn.ctx);
 			if(logfile >= 0) print_ssl_errors(logfile);
@@ -194,7 +169,6 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		}
 		if(!SSL_set1_host(conn.ssl, hostname)) {
 			if(logfile >= 0) dprintf(logfile, "Error: failed to set hostname\n");
-			free_headers(*h);
 			socket_close(conn, logfile);
 			SSL_CTX_free(conn.ctx);
 			if(logfile >= 0) print_ssl_errors(logfile);
@@ -205,7 +179,6 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 			if(SSL_get_verify_result(conn.ssl) != X509_V_OK &&
 					logfile >= 0) dprintf(logfile, "Verify error: %s\n",
 						X509_verify_cert_error_string(SSL_get_verify_result(conn.ssl)));
-			free_headers(*h);
 			socket_close(conn, logfile);
 			SSL_CTX_free(conn.ctx);
 			if(logfile >= 0) print_ssl_errors(logfile);
@@ -218,7 +191,6 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 	size_t hdrs_len = 1; // length of terminating NULL byte "\0"
 	for(headers tmp = *h; tmp; tmp = tmp->rest) {
 		if(!*tmp->header || !*tmp->value) {
-			free_headers(*h);
 			socket_close(conn, logfile);
 			SSL_CTX_free(conn.ctx);
 			if(logfile >= 0) print_ssl_errors(logfile);
@@ -226,12 +198,24 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		}
 		hdrs_len += strlen(tmp->header) + strlen(tmp->value) + 4; // length of header + length of value + (length of "\r\n" and ": ")
 	}
+	hdrs_len += 19 + strlen(hostname);
+	char *length = NULL;
+	if(body && body_len > 0) {
+		if(asprintf(&length, "%ju", body_len) < 0) {
+			socket_close(conn, logfile);
+			SSL_CTX_free(conn.ctx);
+			if(logfile >= 0) print_ssl_errors(logfile);
+			return false;
+		}
+		hdrs_len += 14 + strlen(length);
+	}
+	if(body && content_type) hdrs_len += 12 + strlen(content_type);
 	char *hdrs = malloc(hdrs_len);
 	if(!hdrs) {
-		free_headers(*h);
 		socket_close(conn, logfile);
 		SSL_CTX_free(conn.ctx);
 		if(logfile >= 0) print_ssl_errors(logfile);
+		free(length);
 		return false;
 	}
 	char *hdrs_end = hdrs;
@@ -243,11 +227,41 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		*hdrs_end++ = '\r';
 		*hdrs_end++ = '\n';
 	}
+	hdrs_end = mempcpy(hdrs_end, "Connection", 10);
+	*hdrs_end++ = ':';
+	*hdrs_end++ = ' ';
+	hdrs_end = mempcpy(hdrs_end, "close", 5);
+	*hdrs_end++ = '\r';
+	*hdrs_end++ = '\n';
+	hdrs_end = mempcpy(hdrs_end, "Host", 4);
+	*hdrs_end++ = ':';
+	*hdrs_end++ = ' ';
+	hdrs_end = mempcpy(hdrs_end, hostname, strlen(hostname));
+	*hdrs_end++ = '\r';
+	*hdrs_end++ = '\n';
+	if(body) {
+		if(body_len > 0) {
+			hdrs_end = mempcpy(hdrs_end, "Content-Length", 14);
+			*hdrs_end++ = ':';
+			*hdrs_end++ = ' ';
+			hdrs_end = mempcpy(hdrs_end, length, strlen(length));
+			*hdrs_end++ = '\r';
+			*hdrs_end++ = '\n';
+			free(length);
+		}
+		if(content_type) {
+			hdrs_end = mempcpy(hdrs_end, "Content-Type", 12);
+			*hdrs_end++ = ':';
+			*hdrs_end++ = ' ';
+			hdrs_end = mempcpy(hdrs_end, content_type, strlen(content_type));
+			*hdrs_end++ = '\r';
+			*hdrs_end++ = '\n';
+		}
+	}
 	*hdrs_end = '\0';
-	free_headers(*h);
 	*h = NULL;
 	char *request;
-	if(asprintf(&request, "GET %s%s%s%s%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n%s\r\n", location, (query)?"?":"", (query)?query:"", (frag)?"#":"", (frag)?frag:"", hostname, hdrs) == -1) {
+	if(asprintf(&request, "%s %s%s%s%s%s HTTP/1.1\r\n%s\r\n", strmeth(m), location, (query)?"?":"", (query)?query:"", (frag)?"#":"", (frag)?frag:"", hdrs) == -1) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to create request string.\n");
 		socket_close(conn, logfile);
 		SSL_CTX_free(conn.ctx);
@@ -266,6 +280,15 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		return false;
 	}
 	free(request);
+	if(body && body_len > 0) {
+		if(!sendall(conn, body, body_len, 0, logfile)) {
+			if(logfile >= 0) dprintf(logfile, "Error: failed to send request body.\n");
+			socket_close(conn, logfile);
+			SSL_CTX_free(conn.ctx);
+			if(logfile >= 0) print_ssl_errors(logfile);
+			return false;
+		}
+	}
 
 	// receive response
 
@@ -293,7 +316,7 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 
 	// have status
 	if(stat->code >= 400) {
-		// error
+		// error status code
 		socket_close(conn, logfile);
 		SSL_CTX_free(conn.ctx);
 		if(logfile >= 0) print_ssl_errors(logfile);
@@ -310,39 +333,41 @@ static bool _get_request(char *hostname, char *location, char *protocol, char *q
 		return false;
 	}
 
-	if(contains_header(*h, "Transfer-Encoding") && strncmp(get_header(*h, "Transfer-Encoding"), "chunked", 7) == 0) {
-		// chunked encoding
-		if(read_chunked(conn, (char**)contents, contents_len, false, logfile)) {
-			if(logfile >= 0) dprintf(logfile, "Error: failed to read chunked encoding\n");
-			socket_close(conn, logfile);
-			SSL_CTX_free(conn.ctx);
-			if(logfile >= 0) print_ssl_errors(logfile);
-			free_status(stat);
-			free_headers(*h);
-			return false;
+	if(m != HEAD) {
+		if(contains_header(*h, "Transfer-Encoding") && strncmp(get_header(*h, "Transfer-Encoding"), "chunked", 7) == 0) {
+			// chunked encoding
+			if(read_chunked(conn, (char**)contents, contents_len, false, logfile)) {
+				if(logfile >= 0) dprintf(logfile, "Error: failed to read chunked encoding\n");
+				socket_close(conn, logfile);
+				SSL_CTX_free(conn.ctx);
+				if(logfile >= 0) print_ssl_errors(logfile);
+				free_status(stat);
+				free_headers(*h);
+				return false;
+			}
+		} else if(contains_header(*h, "Content-Length")) {
+			*contents_len = strtol(get_header(*h, "Content-Length"), NULL, 10);
+			*contents = malloc(*contents_len+1);
+			if(!*contents) {
+				socket_close(conn, logfile);
+				SSL_CTX_free(conn.ctx);
+				if(logfile >= 0) print_ssl_errors(logfile);
+				free_status(stat);
+				free_headers(*h);
+				return false;
+			}
+			if(recvall(conn, *contents, *contents_len, 0, logfile)) {
+				if(logfile >= 0) dprintf(logfile, "Error: failed to read content with length: %ld\n", *contents_len);
+				socket_close(conn, logfile);
+				SSL_CTX_free(conn.ctx);
+				if(logfile >= 0) print_ssl_errors(logfile);
+				free_status(stat);
+				free_headers(*h);
+				free(*contents);
+				return false;
+			}
+			((uint8_t*)*contents)[*contents_len] = '\0';
 		}
-	} else if(contains_header(*h, "Content-Length")) {
-		*contents_len = strtol(get_header(*h, "Content-Length"), NULL, 10);
-		*contents = malloc(*contents_len+1);
-		if(!*contents) {
-			socket_close(conn, logfile);
-			SSL_CTX_free(conn.ctx);
-			if(logfile >= 0) print_ssl_errors(logfile);
-			free_status(stat);
-			free_headers(*h);
-			return false;
-		}
-		if(recvall(conn, *contents, *contents_len, 0, logfile)) {
-			if(logfile >= 0) dprintf(logfile, "Error: failed to read content with length: %ld\n", *contents_len);
-			socket_close(conn, logfile);
-			SSL_CTX_free(conn.ctx);
-			if(logfile >= 0) print_ssl_errors(logfile);
-			free_status(stat);
-			free_headers(*h);
-			free(*contents);
-			return false;
-		}
-		((uint8_t*)*contents)[*contents_len] = '\0';
 	}
 	socket_close(conn, logfile);
 	SSL_CTX_free(conn.ctx);
@@ -569,10 +594,11 @@ static bool parse_url(char *url, char **hostname, char **location, char **protoc
 	return true;
 }
 
-// perfoms a get request to url using headers in h on input if not NULL
+// perfoms a HTTP(S) request with method m to url using headers in h on input if not NULL and body if not NULL and body_len > 0
+// if content_type is not NULL, the Content-Type header is set to it
 // returns status in stat, headers in h, and contents in contents (length in contents_len)
 // return value of true for success, and false otherwise
-bool get_request(char *url, status *stat, headers *h, void **content, size_t *content_len, bool redir, char *log) {
+bool http_request(Method m, char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, void **content, size_t *content_len, bool redir, char *log) {
 	int logfile = -1;
 	if(log) {
 		// open log file
@@ -588,7 +614,7 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 		free(last_query);
 		return false;
 	}
-	if(!isdigit(*protocol) && strcmp(protocol, "http")) {
+	if(!isdigit(*protocol) && strcmp(protocol, "http") && strcmp(protocol, "https")) {
 		if(logfile >= 0) dprintf(logfile, "Error: unsupported protocol: '%s'\n", protocol);
 		if(logfile >= 0) close(logfile);
 		if(hostname) free(hostname);
@@ -602,25 +628,21 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 		free(last_query);
 		return false;
 	}
-	bool retv = _get_request(hostname, location, protocol, query, fragment, stat, h, content, content_len, logfile);
+	headers in_hdrs = *h;
+	bool retv = _http_request(m, hostname, location, protocol, query, fragment, stat, h, body, body_len, content_type, content, content_len, logfile);
+	if(hostname) free(hostname);
+	if(location) free(location);
+	if(protocol) free(protocol);
+	if(query) free(query);
+	if(fragment) free(fragment);
 	if(!retv) {
 		if(logfile >= 0) close(logfile);
-		if(hostname) free(hostname);
-		if(location) free(location);
-		if(protocol) free(protocol);
-		if(query) free(query);
-		if(fragment) free(fragment);
 		free(last_protocol);
 		free(last_hostname);
 		free(last_location);
 		free(last_query);
 		return retv;
 	}
-	if(hostname) free(hostname);
-	if(location) free(location);
-	if(protocol) free(protocol);
-	if(query) free(query);
-	if(fragment) free(fragment);
 	url_list l = NULL;
 	url = strdup(url);
 	if(!url) {
@@ -651,6 +673,12 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 	while(redir && stat->code >= 300 && stat->code < 400) {
 		const char *tmp = get_header(*h, "Location");
 		if(!tmp) break;
+		if(stat->code == 303 && m != GET && m != HEAD) {
+			m = GET;
+			body = NULL;
+			body_len = 0;
+			content_type = NULL;
+		}
 		url = strdup(tmp);
 		if(!url) {
 			if(logfile >= 0) dprintf(logfile, "strdup: %s\n", strerror(errno));
@@ -664,7 +692,7 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 			break;
 		}
 		status new_stat = {0};
-		headers new_h = NULL;
+		headers new_h = in_hdrs;
 		void *new_content = NULL;
 		uintmax_t new_content_len = 0;
 		if(!parse_url(url, &hostname, &location, &protocol, &query, &fragment, logfile) || !hostname) {
@@ -672,7 +700,7 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 			retv = false;
 			break;
 		}
-		if(!isdigit(*protocol) && strcmp(protocol, "http")) {
+		if(!isdigit(*protocol) && strcmp(protocol, "http") && strcmp(protocol, "https")) {
 			if(logfile >= 0) dprintf(logfile, "Error: unsupported protocol: '%s'\n", protocol);
 			if(hostname) free(hostname);
 			if(location) free(location);
@@ -683,7 +711,7 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 			retv = false;
 			break;
 		}
-		if(!_get_request(hostname, location, protocol, query, fragment, &new_stat, &new_h, &new_content, &new_content_len, logfile)) {
+		if(!_http_request(m, hostname, location, protocol, query, fragment, &new_stat, &new_h, body, body_len, content_type, &new_content, &new_content_len, logfile)) {
 			if(hostname) free(hostname);
 			if(location) free(location);
 			if(protocol) free(protocol);
@@ -726,4 +754,13 @@ bool get_request(char *url, status *stat, headers *h, void **content, size_t *co
 		free(*content);
 	}
 	return retv;
+}
+bool get_request(char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, void **content, size_t *content_len, bool redir, char *log) {
+	return http_request(GET, url, stat, h, body, body_len, content_type, content, content_len, redir, log);
+}
+bool head_request(char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, void **content, size_t *content_len, bool redir, char *log) {
+	return http_request(HEAD, url, stat, h, body, body_len, content_type, content, content_len, redir, log);
+}
+bool post_request(char *url, status *stat, headers *h, char *body, uintmax_t body_len, char *content_type, void **content, size_t *content_len, bool redir, char *log) {
+	return http_request(POST, url, stat, h, body, body_len, content_type, content, content_len, redir, log);
 }
