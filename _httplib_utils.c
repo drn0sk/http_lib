@@ -543,8 +543,8 @@ bool socket_close(conn_sock sock, int logfile) {
 		int tmp1 = 0;
 		while( (tmp1 = SSL_shutdown(sock.ssl)) == 0 ) {}
 		int sfd = SSL_get_fd(sock.ssl);
-		SSL_free(sock.ssl);
 		if(logfile >= 0) print_ssl_errors(logfile);
+		SSL_free(sock.ssl);
 		int tmp2 = 0;
 		if(sfd >= 0) tmp2 = close(sfd);
 		if(tmp2 < 0 && logfile >= 0) dprintf(logfile, "ERROR: %s\n", strerror(errno));
