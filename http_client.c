@@ -195,7 +195,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 		}
 		hdrs_len += strlen(tmp->header) + strlen(tmp->value) + 4; // length of header + length of value + (length of "\r\n" and ": ")
 	}
-	hdrs_len += 19 + strlen(hostname);
+	hdrs_len += 19 + strlen(hostname) + 8;
 	char *length = NULL;
 	if(body && body_len > 0) {
 		if(asprintf(&length, "%ju", body_len) < 0) {
@@ -203,9 +203,9 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 			if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
 			return false;
 		}
-		hdrs_len += 14 + strlen(length);
+		hdrs_len += 14 + strlen(length) + 4;
 	}
-	if(body && content_type) hdrs_len += 12 + strlen(content_type);
+	if(body && content_type) hdrs_len += 12 + strlen(content_type) + 4;
 	char *hdrs = malloc(hdrs_len);
 	if(!hdrs) {
 		socket_close(conn, logfile);
