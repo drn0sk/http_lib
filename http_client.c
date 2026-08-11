@@ -305,13 +305,6 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 	free(statusLine);
 
 	// have status
-	if(stat->code >= 400) {
-		// error status code
-		socket_close(conn, logfile);
-		if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
-		free_status(stat);
-		return true;
-	}
 
 	if(read_headers(conn, h, logfile)) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to read headers.\n");
