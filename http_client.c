@@ -256,7 +256,7 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 	*hdrs_end = '\0';
 	*h = NULL;
 	char *request;
-	if(asprintf(&request, "%s %s%s%s%s%s %s/1.1\r\n%s\r\n", strmeth(m), location, (query)?"?":"", (query)?query:"", (frag)?"#":"", (frag)?frag:"", (https) ? "HTTPS" : "HTTP", hdrs) == -1) {
+	if(asprintf(&request, "%s %s%s%s%s%s HTTP/1.1\r\n%s\r\n", strmeth(m), location, (query)?"?":"", (query)?query:"", (frag)?"#":"", (frag)?frag:"",  hdrs) == -1) {
 		if(logfile >= 0) dprintf(logfile, "Error: failed to create request string.\n");
 		socket_close(conn, logfile);
 		if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
