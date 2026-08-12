@@ -327,24 +327,26 @@ static bool _http_request(Method m, char *hostname, char *location, char *protoc
 			}
 		} else if(contains_header(*h, "Content-Length")) {
 			*contents_len = strtol(get_header(*h, "Content-Length"), NULL, 10);
-			*contents = malloc(*contents_len+1);
-			if(!*contents) {
-				socket_close(conn, logfile);
-				if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
-				free_status(stat);
-				free_headers(*h);
-				return false;
+			if(*contents_len) {
+				*contents = malloc(*contents_len+1);
+				if(!*contents) {
+					socket_close(conn, logfile);
+					if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
+					free_status(stat);
+					free_headers(*h);
+					return false;
+				}
+				if(recvall(conn, *contents, *contents_len, 0, logfile)) {
+					if(logfile >= 0) dprintf(logfile, "Error: failed to read content with length: %ld\n", *contents_len);
+					socket_close(conn, logfile);
+					if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
+					free_status(stat);
+					free_headers(*h);
+					free(*contents);
+					return false;
+				}
+				((uint8_t*)*contents)[*contents_len] = '\0';
 			}
-			if(recvall(conn, *contents, *contents_len, 0, logfile)) {
-				if(logfile >= 0) dprintf(logfile, "Error: failed to read content with length: %ld\n", *contents_len);
-				socket_close(conn, logfile);
-				if(conn.type == SSL_CONN) SSL_CTX_free(conn.ctx);
-				free_status(stat);
-				free_headers(*h);
-				free(*contents);
-				return false;
-			}
-			((uint8_t*)*contents)[*contents_len] = '\0';
 		}
 	}
 	socket_close(conn, logfile);
