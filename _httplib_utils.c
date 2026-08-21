@@ -526,7 +526,7 @@ int read_chunked(conn_sock sock, char **content, size_t *content_len, bool disca
 static int print_ssl_errors_callback(const char *str, size_t len, void *u) {
 	if(str && len > 0) {
 		const char *pre = "SSL ERROR: ";
-		if(dprintf(*(int*)u, pre) < (ssize_t)(sizeof(pre) - 1)) return -1;
+		if(write(*(int*)u, pre, sizeof(pre)) < (ssize_t)(sizeof(pre) - 1)) return -1;
 		ssize_t rv = write(*(int*)u, str, len);
 		if(rv < 0 || (size_t)rv < len) return -1;
 		if(write(*(int*)u, "\n", 1) < 1) return -1;
